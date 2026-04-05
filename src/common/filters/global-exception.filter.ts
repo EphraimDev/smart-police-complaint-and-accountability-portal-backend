@@ -4,14 +4,15 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
-  Logger,
 } from "@nestjs/common";
 import { Request, Response } from "express";
 import { ApiResponse } from "@common/interfaces";
+import { sanitizeForLog } from "@common/utils";
+import { WinstonLogger } from "@common/utils/winston.logger";
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(GlobalExceptionFilter.name);
+  constructor(private readonly logger: WinstonLogger) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -46,12 +47,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.error(
         `Unhandled exception: ${exception.message}`,
         exception.stack,
-        `CorrelationId: ${correlationId}`,
+        "GlobalExceptionFilter",
       );
     } else {
       this.logger.error(
         `Unknown exception: ${String(exception)}`,
-        `CorrelationId: ${correlationId}`,
+        undefined,
+        "GlobalExceptionFilter",
       );
     }
 
@@ -66,6 +68,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       correlationId,
       ...(details && !isProduction ? { data: details } : {}),
     };
+
+    // this.logger.error(
+    //   JSON.stringify({
+    //     stage: "error-response",
+    //     method: request.method,
+    //     url: request.originalUrl,
+    //     statusCode: status,
+    //     correlationId,
+    //     request: sanitizeForLog(request.body),
+    //     response: sanitizeForLog(body),
+    //   }),
+    //   exception instanceof Error ? exception.stack : undefined,
+    //   "HTTP",
+    // );
 
     response.status(status).json(body);
   }

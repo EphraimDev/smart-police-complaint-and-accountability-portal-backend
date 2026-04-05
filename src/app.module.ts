@@ -41,6 +41,7 @@ import { HealthModule } from "@modules/health/health.module";
 
 // Jobs
 import { JobsModule } from "@jobs/jobs.module";
+import { WinstonLogger } from "@common/utils/winston.logger";
 
 @Module({
   imports: [
@@ -156,6 +157,15 @@ import { JobsModule } from "@jobs/jobs.module";
     {
       provide: APP_PIPE,
       useValue: globalValidationPipe,
+    },
+    {
+      provide: WinstonLogger,
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        new WinstonLogger(
+          configService.get<string>("app.logLevel", "info"),
+          configService.get<string>("app.logDir", "./logs"),
+        ),
     },
   ],
 })

@@ -28,9 +28,7 @@ export function parseTimeString(timeStr: string): number {
   }
 }
 
-export function sanitizeForLog(
-  obj: Record<string, unknown>,
-): Record<string, unknown> {
+export function sanitizeForLog<T>(obj: T): T {
   const sensitiveKeys = [
     "password",
     "token",
@@ -44,13 +42,52 @@ export function sanitizeForLog(
     "ssn",
   ];
 
+  if (Array.isArray(obj)) {
+    return obj.map((item) => sanitizeForLog(item)) as T;
+  }
+
+  if (obj === null || typeof obj !== "object") {
+    return obj;
+  }
+
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (sensitiveKeys.some((sk) => key.toLowerCase().includes(sk))) {
-      sanitized[key] = "[REDACTED]";
-    } else {
-      sanitized[key] = value;
+    const normalizedKey = key.toLowerCase();
+
+    if (normalizedKey.includes("email")) {
+      sanitized[key] = maskEmailForLog(value);
+      continue;
     }
+
+    if (sensitiveKeys.some((sk) => normalizedKey.includes(sk))) {
+      sanitized[key] = "[REDACTED]";
+      continue;
+    }
+
+    sanitized[key] = sanitizeForLog(value);
   }
-  return sanitized;
+
+  return sanitized as T;
+}
+
+function maskEmailForLog(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return "[REDACTED]";
+  }
+
+  const [localPart, domain] = value.split("@");
+
+  if (!localPart || !domain) {
+    return "[REDACTED]";
+  }
+
+  if (localPart.length <= 4) {
+    return `${localPart}@${domain}`;
+  }
+
+  const firstTwoChars = localPart.slice(0, 2);
+  const lastTwoChars = localPart.slice(-2);
+  const maskedMiddle = "*".repeat(localPart.length - 4);
+
+  return `${firstTwoChars}${maskedMiddle}${lastTwoChars}@${domain}`;
 }

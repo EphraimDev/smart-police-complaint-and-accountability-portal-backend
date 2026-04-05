@@ -1,7 +1,8 @@
-import { LoggerService } from "@nestjs/common";
+import { Injectable, LoggerService } from "@nestjs/common";
 import * as winston from "winston";
-import "winston-daily-rotate-file";
+import "winston-daily-rotate-file";import * as rTracer from 'cls-rtracer';
 
+@Injectable()
 export class WinstonLogger implements LoggerService {
   private readonly logger: winston.Logger;
 
@@ -10,6 +11,13 @@ export class WinstonLogger implements LoggerService {
       winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss.SSS" }),
       winston.format.errors({ stack: true }),
       winston.format.json(),
+      winston.format.printf((info) => {
+        const rid = rTracer.id();
+        const lineInfo = this.getCallerInfo();
+        return rid
+          ? `| ${info.timestamp} | ${rid} | ${info.label}${lineInfo} | ${info.message} |`
+          : `| ${info.timestamp} | ${info.label}${lineInfo} | ${info.message} |`;
+      }),
     );
 
     const consoleFormat = winston.format.combine(
@@ -53,6 +61,29 @@ export class WinstonLogger implements LoggerService {
       ],
     });
   }
+
+  private getCallerInfo = (): string => {
+    const stack = new Error().stack;
+    if (!stack) return "";
+
+    const stackLines = stack.split("\n");
+    // Skip Error, getCallerInfo, printf, and internal winston calls to find the actual caller
+    for (const line of stackLines) {
+      if (
+        line.includes("logger.util") ||
+        line.includes("node_modules") ||
+        line.includes("Error")
+      ) {
+        continue;
+      }
+      // Match patterns like "at functionName (/path/file.ts:123:45)" or "at /path/file.ts:123:45"
+      const match = line.match(/:(\d+):\d+\)?$/);
+      if (match) {
+        return `:${match[1]}`;
+      }
+    }
+    return "";
+  };
 
   log(message: string, context?: string): void {
     this.logger.info(message, { context });

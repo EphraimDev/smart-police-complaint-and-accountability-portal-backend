@@ -8,8 +8,17 @@ import {
   Param,
   Query,
   ParseUUIDPipe,
+  UploadedFiles,
+  UseInterceptors,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+} from "@nestjs/swagger";
+import { FilesInterceptor } from "@nestjs/platform-express";
 import { ComplaintsService } from "./complaints.service";
 import {
   CreateComplaintDto,
@@ -24,9 +33,17 @@ import {
   CurrentUser,
   Public,
   Idempotent,
+  ClientIp,
 } from "@common/decorators";
 import { Permission } from "@common/enums";
 import { RequestUser } from "@common/interfaces";
+
+type UploadedComplaintFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
 
 @ApiTags("Complaints")
 @ApiBearerAuth("access-token")
@@ -34,15 +51,57 @@ import { RequestUser } from "@common/interfaces";
 export class ComplaintsController {
   constructor(private readonly complaintsService: ComplaintsService) {}
 
+  @Public()
   @Post()
   @Idempotent()
-  @RequirePermissions(Permission.COMPLAINT_CREATE)
-  @ApiOperation({ summary: "Create a complaint" })
+  @UseInterceptors(FilesInterceptor("attachments", 10))
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      required: ["title", "description", "category"],
+      properties: {
+        title: { type: "string", maxLength: 500 },
+        description: { type: "string" },
+        category: { type: "string" },
+        severity: { type: "string" },
+        source: { type: "string" },
+        channel: { type: "string" },
+        isAnonymous: { type: "boolean" },
+        complainantName: { type: "string" },
+        complainantEmail: { type: "string" },
+        complainantPhone: { type: "string" },
+        complainantAddress: { type: "string" },
+        incidentDate: { type: "string", format: "date" },
+        incidentLocation: { type: "string" },
+        stationId: { type: "string", format: "uuid" },
+        officerIds: {
+          type: "array",
+          items: { type: "string", format: "uuid" },
+        },
+        idempotencyKey: { type: "string" },
+        attachments: {
+          type: "array",
+          items: { type: "string", format: "binary" },
+        },
+      },
+    },
+  })
+  @ApiOperation({
+    summary: "Create a complaint with optional authentication and file uploads",
+  })
   async create(
     @Body() dto: CreateComplaintDto,
-    @CurrentUser() user: RequestUser,
+    @UploadedFiles() attachments: UploadedComplaintFile[] = [],
+    @CurrentUser() user?: RequestUser,
+    @ClientIp() ipAddress?: string,
   ) {
-    return this.complaintsService.create(dto, user.id);
+    return this.complaintsService.create(
+      dto,
+      user?.id ?? null,
+      attachments,
+      ipAddress ?? "unknown",
+    );
   }
 
   @Get()

@@ -5,7 +5,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, LessThan, Not, In } from "typeorm";
 import { QUEUE_NAMES } from "@common/constants";
 import { ComplaintEntity } from "@modules/complaints/entities/complaint.entity";
-import { ComplaintStatus } from "@common/enums";
+import { ComplaintStatus, NotificationType } from "@common/enums";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 
@@ -44,11 +44,16 @@ export class OverdueCheckProcessor extends WorkerHost {
     for (const complaint of overdueComplaints) {
       await this.notificationQueue.add("overdue-notification", {
         recipientId: complaint.citizenUserId,
-        type: "sla_breach",
+        type: NotificationType.IN_APP,
         subject: `Complaint ${complaint.referenceNumber} is overdue`,
         body: `Your complaint ${complaint.referenceNumber} has exceeded its SLA due date.`,
         referenceType: "complaint",
         referenceId: complaint.id,
+        metadata: {
+          complaintId: complaint.id,
+          referenceNumber: complaint.referenceNumber,
+          reason: "sla_breach",
+        },
       });
     }
   }

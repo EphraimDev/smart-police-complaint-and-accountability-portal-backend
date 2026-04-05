@@ -1,22 +1,28 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
   BadRequestException,
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, DataSource } from "typeorm";
+import { Repository, DataSource, EntityManager } from "typeorm";
 import { ConfigService } from "@nestjs/config";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { v4 as uuidv4 } from "uuid";
+import { createHash } from "crypto";
+import * as path from "path";
+import * as mime from "mime-types";
 import {
   ComplaintEntity,
   ComplaintNoteEntity,
 } from "./entities/complaint.entity";
 import { ComplaintStatusHistoryEntity } from "@modules/complaint-status-history/entities/complaint-status-history.entity";
 import { ComplaintOfficerEntity } from "@modules/officers/entities/officer.entity";
+import {
+  EvidenceEntity,
+  EvidenceChainOfCustodyEntity,
+} from "@modules/evidence/entities/evidence.entity";
 import {
   CreateComplaintDto,
   UpdateComplaintDto,
@@ -25,12 +31,26 @@ import {
   AddComplaintNoteDto,
 } from "./dto/complaint.dto";
 import { AuditLogService } from "@modules/audit-logs/audit-log.service";
-import { AuditAction, ComplaintStatus } from "@common/enums";
+import {
+  AuditAction,
+  ComplaintStatus,
+  EvidenceAccessLevel,
+  EvidenceType,
+  NotificationType,
+} from "@common/enums";
 import { QUEUE_NAMES } from "@common/constants";
 import { EncryptionUtil } from "@shared/security";
 import { TransactionHelper } from "@shared/database";
 import { generateComplaintReference } from "@common/utils";
 import { PaginatedResult } from "@shared/pagination/pagination.dto";
+import { LocalStorageProvider } from "@integrations/storage";
+
+type UploadedComplaintFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
 
 @Injectable()
 export class ComplaintsService {
@@ -52,11 +72,14 @@ export class ComplaintsService {
     private readonly aiQueue: Queue,
     @InjectQueue(QUEUE_NAMES.NOTIFICATIONS)
     private readonly notificationQueue: Queue,
+    private readonly storageProvider: LocalStorageProvider,
   ) {}
 
   async create(
     dto: CreateComplaintDto,
     userId: string | null,
+    files: UploadedComplaintFile[] = [],
+    ipAddress: string = "unknown",
   ): Promise<ComplaintEntity> {
     // Idempotency check
     if (dto.idempotencyKey) {
@@ -69,96 +92,129 @@ export class ComplaintsService {
     const encryptionKey = this.configService.get<string>(
       "auth.fieldEncryptionKey",
     )!;
+    const uploadedPaths: string[] = [];
 
-    return TransactionHelper.run(this.dataSource, async (qr) => {
-      const referenceNumber = generateComplaintReference();
-      const trackingToken = uuidv4();
+    try {
+      return await TransactionHelper.run(this.dataSource, async (qr) => {
+        const referenceNumber = generateComplaintReference();
+        const trackingToken = uuidv4();
 
-      const complaint = qr.manager.create(ComplaintEntity, {
-        referenceNumber,
-        title: dto.title,
-        description: dto.description,
-        category: dto.category,
-        severity: dto.severity,
-        source: dto.source,
-        channel: dto.channel,
-        isAnonymous: dto.isAnonymous ?? false,
-        citizenUserId: userId,
-        complainantNameEncrypted: dto.complainantName
-          ? EncryptionUtil.encrypt(dto.complainantName, encryptionKey)
-          : null,
-        complainantEmailEncrypted: dto.complainantEmail
-          ? EncryptionUtil.encrypt(dto.complainantEmail, encryptionKey)
-          : null,
-        complainantPhoneEncrypted: dto.complainantPhone
-          ? EncryptionUtil.encrypt(dto.complainantPhone, encryptionKey)
-          : null,
-        complainantAddressEncrypted: dto.complainantAddress
-          ? EncryptionUtil.encrypt(dto.complainantAddress, encryptionKey)
-          : null,
-        incidentDate: dto.incidentDate ? new Date(dto.incidentDate) : null,
-        incidentLocation: dto.incidentLocation ?? null,
-        stationId: dto.stationId ?? null,
-        trackingToken,
-        status: ComplaintStatus.SUBMITTED,
-        idempotencyKey: dto.idempotencyKey ?? null,
-        createdBy: userId,
-      });
+        const complaint = qr.manager.create(ComplaintEntity, {
+          referenceNumber,
+          title: dto.title,
+          description: dto.description,
+          category: dto.category,
+          severity: dto.severity,
+          source: dto.source,
+          channel: dto.channel,
+          isAnonymous: dto.isAnonymous ?? false,
+          citizenUserId: userId,
+          complainantNameEncrypted: dto.complainantName
+            ? EncryptionUtil.encrypt(dto.complainantName, encryptionKey)
+            : null,
+          complainantEmailEncrypted: dto.complainantEmail
+            ? EncryptionUtil.encrypt(dto.complainantEmail, encryptionKey)
+            : null,
+          complainantPhoneEncrypted: dto.complainantPhone
+            ? EncryptionUtil.encrypt(dto.complainantPhone, encryptionKey)
+            : null,
+          complainantAddressEncrypted: dto.complainantAddress
+            ? EncryptionUtil.encrypt(dto.complainantAddress, encryptionKey)
+            : null,
+          incidentDate: dto.incidentDate ? new Date(dto.incidentDate) : null,
+          incidentLocation: dto.incidentLocation ?? null,
+          stationId: dto.stationId ?? null,
+          trackingToken,
+          status: ComplaintStatus.SUBMITTED,
+          idempotencyKey: dto.idempotencyKey ?? null,
+          createdBy: userId,
+        });
 
-      const saved = await qr.manager.save(complaint);
+        const saved = await qr.manager.save(complaint);
+        const actorId = userId || saved.id;
 
-      // Create initial status history
-      const statusHistory = qr.manager.create(ComplaintStatusHistoryEntity, {
-        complaintId: saved.id,
-        previousStatus: null,
-        newStatus: ComplaintStatus.SUBMITTED,
-        changedById: userId || saved.id,
-        reason: "Complaint submitted",
-      });
-      await qr.manager.save(statusHistory);
+        // Create initial status history
+        const statusHistory = qr.manager.create(ComplaintStatusHistoryEntity, {
+          complaintId: saved.id,
+          previousStatus: null,
+          newStatus: ComplaintStatus.SUBMITTED,
+          changedById: actorId,
+          reason: "Complaint submitted",
+        });
+        await qr.manager.save(statusHistory);
 
-      // Link officers if provided
-      if (dto.officerIds?.length) {
-        const officerLinks = dto.officerIds.map((officerId) =>
-          qr.manager.create(ComplaintOfficerEntity, {
+        // Link officers if provided
+        if (dto.officerIds?.length) {
+          const officerLinks = dto.officerIds.map((officerId) =>
+            qr.manager.create(ComplaintOfficerEntity, {
+              complaintId: saved.id,
+              officerId,
+              role: "accused",
+            }),
+          );
+          await qr.manager.save(officerLinks);
+        }
+
+        if (files.length > 0) {
+          await this.attachEvidenceFiles(
+            qr.manager,
+            saved,
+            files,
+            actorId,
+            ipAddress,
+            uploadedPaths,
+          );
+        }
+
+        // Audit log
+        await this.auditLogService.log({
+          actorId: userId,
+          action: AuditAction.COMPLAINT_CREATED,
+          entityType: "complaint",
+          entityId: saved.id,
+          afterState: {
+            referenceNumber,
+            category: saved.category,
+            severity: saved.severity,
+            isAnonymous: saved.isAnonymous,
+            uploadedFiles: files.length,
+          },
+        });
+
+        // Enqueue AI analysis asynchronously
+        await this.aiQueue.add("classify-complaint", {
+          complaintId: saved.id,
+          text: `${saved.title} ${saved.description}`,
+        });
+
+        // Enqueue notification
+        await this.notificationQueue.add("complaint-submitted", {
+          recipientId: userId ?? undefined,
+          recipientEmail: undefined,
+          type: NotificationType.IN_APP,
+          subject: `Complaint ${saved.referenceNumber} submitted`,
+          body: `Your complaint has been submitted successfully. Reference number: ${saved.referenceNumber}. Tracking token: ${saved.trackingToken}.`,
+          referenceType: "complaint",
+          referenceId: saved.id,
+          metadata: {
             complaintId: saved.id,
-            officerId,
-            role: "accused",
-          }),
-        );
-        await qr.manager.save(officerLinks);
+            referenceNumber: saved.referenceNumber,
+            trackingToken: saved.trackingToken,
+          },
+        });
+
+        return saved;
+      });
+    } catch (error) {
+      await this.cleanupUploadedFiles(uploadedPaths);
+
+      if (error instanceof BadRequestException) {
+        throw error;
       }
 
-      // Audit log
-      await this.auditLogService.log({
-        actorId: userId,
-        action: AuditAction.COMPLAINT_CREATED,
-        entityType: "complaint",
-        entityId: saved.id,
-        afterState: {
-          referenceNumber,
-          category: saved.category,
-          severity: saved.severity,
-          isAnonymous: saved.isAnonymous,
-        },
-      });
-
-      // Enqueue AI analysis asynchronously
-      await this.aiQueue.add("classify-complaint", {
-        complaintId: saved.id,
-        text: `${saved.title} ${saved.description}`,
-      });
-
-      // Enqueue notification
-      await this.notificationQueue.add("complaint-submitted", {
-        complaintId: saved.id,
-        referenceNumber: saved.referenceNumber,
-        trackingToken: saved.trackingToken,
-        userId,
-      });
-
-      return saved;
-    });
+      this.logger.error("Failed to create complaint with uploads", error);
+      throw error;
+    }
   }
 
   async findById(id: string): Promise<ComplaintEntity> {
@@ -361,10 +417,18 @@ export class ComplaintsService {
 
       // Notify about status change
       await this.notificationQueue.add("complaint-status-changed", {
-        complaintId: id,
-        previousStatus,
-        newStatus: dto.status,
-        citizenUserId: complaint.citizenUserId,
+        recipientId: complaint.citizenUserId ?? undefined,
+        type: NotificationType.IN_APP,
+        subject: `Complaint ${complaint.referenceNumber} status updated`,
+        body: `Your complaint status changed from ${previousStatus} to ${dto.status}.`,
+        referenceType: "complaint",
+        referenceId: id,
+        metadata: {
+          complaintId: id,
+          referenceNumber: complaint.referenceNumber,
+          previousStatus,
+          newStatus: dto.status,
+        },
       });
 
       return saved;
@@ -412,5 +476,151 @@ export class ComplaintsService {
       where: { complaintId },
       order: { createdAt: "ASC" },
     });
+  }
+
+  private async attachEvidenceFiles(
+    manager: EntityManager,
+    complaint: ComplaintEntity,
+    files: UploadedComplaintFile[],
+    actorId: string,
+    ipAddress: string,
+    uploadedPaths: string[],
+  ): Promise<void> {
+    for (const file of files) {
+      this.validateUploadedFile(file);
+
+      const extension =
+        path.extname(file.originalname) ||
+        `.${mime.extension(file.mimetype) || "bin"}`;
+      const safeBaseName = this.sanitizeFileBaseName(
+        path.basename(file.originalname, path.extname(file.originalname)),
+      );
+      const generatedFileName = `${uuidv4()}-${safeBaseName}${extension}`;
+      const storagePath = path.posix.join("complaints", complaint.id, generatedFileName);
+      const fileHash = createHash("sha256").update(file.buffer).digest("hex");
+
+      await this.storageProvider.upload(storagePath, file.buffer, file.mimetype);
+      uploadedPaths.push(storagePath);
+
+      const evidence = manager.create(EvidenceEntity, {
+        complaintId: complaint.id,
+        fileName: generatedFileName,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        fileSize: file.size,
+        storagePath,
+        storageProvider: this.configService.get<string>(
+          "STORAGE_PROVIDER",
+          "local",
+        ),
+        fileHash,
+        hashAlgorithm: "sha256",
+        evidenceType: this.inferEvidenceType(file.mimetype),
+        accessLevel: EvidenceAccessLevel.RESTRICTED,
+        description: null,
+        createdBy: actorId,
+      });
+      const savedEvidence = await manager.save(evidence);
+
+      const custodyEntry = manager.create(EvidenceChainOfCustodyEntity, {
+        evidenceId: savedEvidence.id,
+        actorId,
+        action: "uploaded",
+        ipAddress,
+        notes: "Uploaded during complaint submission",
+      });
+      await manager.save(custodyEntry);
+
+      await this.auditLogService.log({
+        actorId,
+        action: AuditAction.EVIDENCE_UPLOADED,
+        entityType: "evidence",
+        entityId: savedEvidence.id,
+        afterState: {
+          complaintId: complaint.id,
+          fileName: savedEvidence.originalName,
+          evidenceType: savedEvidence.evidenceType,
+          fileHash: savedEvidence.fileHash,
+        },
+        ipAddress,
+      });
+    }
+  }
+
+  private validateUploadedFile(file: UploadedComplaintFile): void {
+    if (!file?.buffer) {
+      throw new BadRequestException("Uploaded file payload is invalid");
+    }
+
+    const allowedTypes = this.configService.get<string[]>(
+      "app.allowedFileTypes",
+      [],
+    );
+    if (allowedTypes.length > 0 && !allowedTypes.includes(file.mimetype)) {
+      throw new BadRequestException(`File type ${file.mimetype} is not allowed`);
+    }
+
+    const maxSize = this.configService.get<number>("app.maxFileSize", 10485760);
+    if (file.size > maxSize) {
+      throw new BadRequestException(
+        `File size exceeds maximum of ${maxSize} bytes`,
+      );
+    }
+
+    const expectedExtension = mime.extension(file.mimetype);
+    const actualExtension = file.originalname.split(".").pop()?.toLowerCase();
+    if (
+      expectedExtension &&
+      actualExtension &&
+      expectedExtension !== actualExtension
+    ) {
+      throw new BadRequestException("File extension does not match MIME type");
+    }
+  }
+
+  private inferEvidenceType(mimeType: string): EvidenceType {
+    if (mimeType.startsWith("image/")) {
+      return EvidenceType.IMAGE;
+    }
+
+    if (mimeType.startsWith("video/")) {
+      return EvidenceType.VIDEO;
+    }
+
+    if (mimeType.startsWith("audio/")) {
+      return EvidenceType.AUDIO;
+    }
+
+    if (
+      mimeType === "application/pdf" ||
+      mimeType.startsWith("text/") ||
+      mimeType.includes("document") ||
+      mimeType.includes("sheet") ||
+      mimeType.includes("presentation")
+    ) {
+      return EvidenceType.DOCUMENT;
+    }
+
+    return EvidenceType.OTHER;
+  }
+
+  private sanitizeFileBaseName(originalName: string): string {
+    return originalName
+      .replace(/[^a-zA-Z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "file";
+  }
+
+  private async cleanupUploadedFiles(uploadedPaths: string[]): Promise<void> {
+    for (const uploadedPath of uploadedPaths) {
+      try {
+        await this.storageProvider.delete(uploadedPath);
+      } catch (cleanupError) {
+        this.logger.warn(
+          `Failed to clean up uploaded file at ${uploadedPath}: ${String(cleanupError)}`,
+        );
+      }
+    }
   }
 }

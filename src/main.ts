@@ -1,12 +1,8 @@
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
+import * as rtracer from "cls-rtracer";
 import { AppModule } from "./app.module";
-import { WinstonLogger } from "@common/utils/winston.logger";
-import { globalValidationPipe } from "@common/pipes";
-import { GlobalExceptionFilter } from "@common/filters";
-import { ResponseTransformInterceptor } from "@common/interceptors";
-import { RequestTimingInterceptor } from "@common/interceptors";
 import { setupSwagger } from "@config/swagger.config";
 
 async function bootstrap() {
@@ -15,11 +11,7 @@ async function bootstrap() {
   });
 
   const configService = app.get(ConfigService);
-
-  const logLevel = configService.get<string>("app.logLevel", "info");
-  const logDir = configService.get<string>("app.logDir", "./logs");
-  const logger = new WinstonLogger(logLevel, logDir);
-  app.useLogger(logger);
+  app.use(rtracer.expressMiddleware());
 
   app.use(helmet());
 
@@ -43,13 +35,6 @@ async function bootstrap() {
   const apiPrefix = configService.get<string>("app.apiPrefix", "api/v1");
   app.setGlobalPrefix(apiPrefix);
 
-  app.useGlobalPipes(globalValidationPipe);
-  app.useGlobalFilters(new GlobalExceptionFilter());
-  app.useGlobalInterceptors(
-    new RequestTimingInterceptor(),
-    new ResponseTransformInterceptor(),
-  );
-
   const swaggerEnabled = configService.get<boolean>("app.swaggerEnabled", true);
   if (swaggerEnabled) {
     setupSwagger(app);
@@ -58,10 +43,10 @@ async function bootstrap() {
   const port = configService.get<number>("app.port", 3000);
   await app.listen(port);
 
-  logger.log(`Application running on port ${port}`, "Bootstrap");
-  logger.log(`API prefix: ${apiPrefix}`, "Bootstrap");
+  console.log(`Application running on port ${port}`);
+  console.log(`API prefix: ${apiPrefix}`);
   if (swaggerEnabled) {
-    logger.log(`Swagger docs available at /docs`, "Bootstrap");
+    console.log(`Swagger docs available at /docs`);
   }
 }
 

@@ -18,16 +18,24 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
 
     if (isPublic) {
+      const token = this.extractTokenFromHeader(request);
+      if (token) {
+        try {
+          await this.attachUserToRequest(request, token);
+        } catch {
+          // Public routes stay accessible even when an optional token is invalid.
+        }
+      }
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
@@ -35,30 +43,35 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const secret = new TextEncoder().encode(
-        this.configService.get<string>("auth.jwtAccessSecret"),
-      );
-      const issuer = this.configService.get<string>("auth.jwtIssuer");
-
-      const { payload } = await jose.jwtVerify(token, secret, {
-        issuer,
-      });
-
-      const jwtPayload = payload as unknown as JwtPayload;
-
-      const user: RequestUser = {
-        id: jwtPayload.sub,
-        email: jwtPayload.email,
-        roles: jwtPayload.roles,
-        permissions: jwtPayload.permissions,
-        sessionId: jwtPayload.sessionId,
-      };
-
-      request.user = user;
+      await this.attachUserToRequest(request, token);
       return true;
     } catch {
       throw new UnauthorizedException("Invalid or expired token");
     }
+  }
+
+  private async attachUserToRequest(
+    request: { headers: Record<string, string>; user?: RequestUser },
+    token: string,
+  ): Promise<void> {
+    const secret = new TextEncoder().encode(
+      this.configService.get<string>("auth.jwtAccessSecret"),
+    );
+    const issuer = this.configService.get<string>("auth.jwtIssuer");
+
+    const { payload } = await jose.jwtVerify(token, secret, {
+      issuer,
+    });
+
+    const jwtPayload = payload as unknown as JwtPayload;
+
+    request.user = {
+      id: jwtPayload.sub,
+      email: jwtPayload.email,
+      roles: jwtPayload.roles,
+      permissions: jwtPayload.permissions,
+      sessionId: jwtPayload.sessionId,
+    };
   }
 
   private extractTokenFromHeader(request: {
