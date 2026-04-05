@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: spcap-api
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - spcap-net
+    volumes:
+      - uploads:/app/uploads
+      - logs:/app/logs
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: spcap-postgres
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-spcap}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-spcap_secret}
+      POSTGRES_DB: ${DB_DATABASE:-spcap}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-spcap}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - spcap-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: spcap-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - spcap-net
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  logs:
+
+networks:
+  spcap-net:
+    driver: bridge
