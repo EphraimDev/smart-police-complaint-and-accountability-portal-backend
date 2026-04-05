@@ -38,6 +38,7 @@ import { ReportsModule } from "@modules/reports/reports.module";
 import { AdminModule } from "@modules/admin/admin.module";
 import { AuditLogModule } from "@modules/audit-logs/audit-log.module";
 import { HealthModule } from "@modules/health/health.module";
+import { FileAccessModule } from "@modules/file-access/file-access.module";
 
 // Jobs
 import { JobsModule } from "@jobs/jobs.module";
@@ -128,6 +129,7 @@ import { WinstonLogger } from "@common/utils/winston.logger";
 
     // Background jobs
     JobsModule,
+    FileAccessModule,
   ],
   providers: [
     // Global guards (order matters: auth first, then permissions)

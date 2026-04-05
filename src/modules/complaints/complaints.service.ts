@@ -52,6 +52,37 @@ type UploadedComplaintFile = {
   buffer: Buffer;
 };
 
+export interface ComplaintTrackingHistoryItem {
+  previousStatus: ComplaintStatus | null;
+  newStatus: ComplaintStatus;
+  changedAt: Date;
+  changedById: string;
+  reasonCode: string | null;
+  reason: string | null;
+}
+
+type ComplaintTrackingAttachment = EvidenceEntity & {
+  fileUrl: string;
+};
+
+export type ComplaintTrackingResult = Omit<
+  ComplaintEntity,
+  | "complainantNameEncrypted"
+  | "complainantEmailEncrypted"
+  | "complainantPhoneEncrypted"
+  | "complainantAddressEncrypted"
+  | "trackingToken"
+> & {
+  isTrackingTokenAuthenticated: boolean;
+  trackingToken?: string | null;
+  complainantName?: string | null;
+  complainantEmail?: string | null;
+  complainantPhone?: string | null;
+  complainantAddress?: string | null;
+  attachments: ComplaintTrackingAttachment[];
+  statusHistory: ComplaintTrackingHistoryItem[];
+};
+
 @Injectable()
 export class ComplaintsService {
   private readonly logger = new Logger(ComplaintsService.name);
@@ -223,23 +254,79 @@ export class ComplaintsService {
     return complaint;
   }
 
-  async findByReference(reference: string): Promise<ComplaintEntity> {
+  async findByReference(reference: string): Promise<ComplaintTrackingResult> {
     const complaint = await this.complaintRepository.findOne({
       where: [{ referenceNumber: reference }, { trackingToken: reference }],
-      select: [
-        "id",
-        "referenceNumber",
-        "title",
-        "status",
-        "severity",
-        "category",
-        "createdAt",
-        "updatedAt",
-        "isOverdue",
-      ],
     });
     if (!complaint) throw new NotFoundException("Complaint not found");
-    return complaint;
+
+    const statusHistory = await this.statusHistoryRepository.find({
+      where: { complaintId: complaint.id },
+      order: { createdAt: "ASC" },
+    });
+    const attachmentRecords = await this.dataSource
+      .getRepository(EvidenceEntity)
+      .find({
+        where: { complaintId: complaint.id },
+        order: { createdAt: "ASC" },
+      });
+    const attachments = await Promise.all(
+      attachmentRecords.map(async (attachment) => ({
+        ...attachment,
+        fileUrl: await this.storageProvider.getSignedUrl(attachment.storagePath),
+      })),
+    );
+    const isTrackingTokenAuthenticated = complaint.trackingToken === reference;
+    const encryptionKey = isTrackingTokenAuthenticated
+      ? this.configService.get<string>("auth.fieldEncryptionKey")!
+      : null;
+    const {
+      complainantNameEncrypted,
+      complainantEmailEncrypted,
+      complainantPhoneEncrypted,
+      complainantAddressEncrypted,
+      trackingToken,
+      ...complaintData
+    } = complaint;
+    return {
+      ...complaintData,
+      attachments,
+      isTrackingTokenAuthenticated,
+      ...(isTrackingTokenAuthenticated
+        ? {
+            trackingToken,
+            complainantName: complainantNameEncrypted
+              ? EncryptionUtil.decrypt(complainantNameEncrypted, encryptionKey!)
+              : null,
+            complainantEmail: complainantEmailEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantEmailEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+            complainantPhone: complainantPhoneEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantPhoneEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+            complainantAddress: complainantAddressEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantAddressEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+          }
+        : {}),
+      statusHistory: statusHistory.map((entry) => ({
+        previousStatus: entry.previousStatus,
+        newStatus: entry.newStatus,
+        changedAt: entry.createdAt,
+        changedById: entry.changedById,
+        reasonCode: entry.reasonCode,
+        reason: entry.reason,
+      })),
+    };
   }
 
   async findAll(
