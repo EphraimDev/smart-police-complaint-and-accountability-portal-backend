@@ -173,7 +173,7 @@ export class ReportsService {
 
     const byReason = await this.escalationRepository
       .createQueryBuilder("e")
-      .select("e.escalationReason", "reason")
+      .select("e.reason", "reason")
       .addSelect("COUNT(*)", "count")
       .where(
         filters.startDate && filters.endDate
@@ -184,7 +184,7 @@ export class ReportsService {
           end: filters.endDate,
         },
       )
-      .groupBy("e.escalationReason")
+      .groupBy("e.reason")
       .getRawMany();
 
     return {
@@ -196,12 +196,12 @@ export class ReportsService {
   async getTrendData(filters: ReportFiltersDto) {
     const periodGroup =
       filters.period === "daily"
-        ? "TO_CHAR(c.\"createdAt\", 'YYYY-MM-DD')"
+        ? "TO_CHAR(c.created_at, 'YYYY-MM-DD')"
         : filters.period === "weekly"
-          ? "TO_CHAR(c.\"createdAt\", 'IYYY-IW')"
+          ? "TO_CHAR(c.created_at, 'IYYY-IW')"
           : filters.period === "yearly"
-            ? "TO_CHAR(c.\"createdAt\", 'YYYY')"
-            : "TO_CHAR(c.\"createdAt\", 'YYYY-MM')";
+            ? "TO_CHAR(c.created_at, 'YYYY')"
+            : "TO_CHAR(c.created_at, 'YYYY-MM')";
 
     const trends = await this.complaintRepository
       .createQueryBuilder("c")

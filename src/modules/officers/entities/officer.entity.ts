@@ -1,5 +1,6 @@
-import { Entity, Column, Index } from "typeorm";
+import { Entity, Column, Index, ManyToOne, JoinColumn } from "typeorm";
 import { AuditableEntity } from "@shared/base/base.entity";
+import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 
 @Entity("officers")
 @Index(["badgeNumber"], { unique: true })
@@ -31,6 +32,10 @@ export class OfficerEntity extends AuditableEntity {
 
   @Column({ name: "station_id", type: "uuid", nullable: true })
   stationId!: string | null;
+
+  @ManyToOne(() => PoliceStationEntity, { nullable: true })
+  @JoinColumn({ name: "station_id" })
+  station!: PoliceStationEntity | null;
 
   @Column({ name: "is_active", default: true })
   isActive!: boolean;

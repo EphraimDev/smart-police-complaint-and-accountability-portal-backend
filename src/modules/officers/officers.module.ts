@@ -7,10 +7,15 @@ import {
   ComplaintOfficerEntity,
 } from "./entities/officer.entity";
 import { AuditLogModule } from "@modules/audit-logs/audit-log.module";
+import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([OfficerEntity, ComplaintOfficerEntity]),
+    TypeOrmModule.forFeature([
+      OfficerEntity,
+      ComplaintOfficerEntity,
+      PoliceStationEntity,
+    ]),
     AuditLogModule,
   ],
   controllers: [OfficersController],

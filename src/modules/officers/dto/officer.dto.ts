@@ -7,6 +7,7 @@ import {
   IsDateString,
 } from "class-validator";
 import { PaginationDto } from "@shared/pagination/pagination.dto";
+import { OfficerEntity } from "../entities/officer.entity";
 
 export class CreateOfficerDto {
   @ApiProperty()
@@ -82,4 +83,42 @@ export class ListOfficersDto extends PaginationDto {
   @IsOptional()
   @IsString()
   rank?: string;
+}
+
+export class BulkUploadOfficersDto {
+  @ApiProperty({ description: "Station ID to assign to all uploaded officers" })
+  @IsUUID()
+  @IsNotEmpty()
+  stationId!: string;
+}
+
+export class BulkUploadOfficersResponseDto {
+  @ApiProperty()
+  totalRows!: number;
+
+  @ApiProperty()
+  successCount!: number;
+
+  @ApiProperty()
+  failureCount!: number;
+
+  @ApiProperty({ type: "array", items: { type: "object" } })
+  createdOfficers!: OfficerEntity[];
+
+  @ApiProperty({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        row: { type: "number" },
+        badgeNumber: { type: "string", nullable: true },
+        error: { type: "string" },
+      },
+    },
+  })
+  errors!: Array<{
+    row: number;
+    badgeNumber: string | null;
+    error: string;
+  }>;
 }

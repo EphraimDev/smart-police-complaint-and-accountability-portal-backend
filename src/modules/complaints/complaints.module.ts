@@ -20,6 +20,7 @@ import {
 } from "@modules/evidence/entities/evidence.entity";
 import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 import { LocalStorageProvider } from "@integrations/storage";
+import { ComplaintAssignmentEntity } from "@modules/complaint-assignments/entities/complaint-assignment.entity";
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { LocalStorageProvider } from "@integrations/storage";
       EvidenceEntity,
       EvidenceChainOfCustodyEntity,
       PoliceStationEntity,
+      ComplaintAssignmentEntity,
     ]),
     BullModule.registerQueue(
       { name: QUEUE_NAMES.AI_ANALYSIS },

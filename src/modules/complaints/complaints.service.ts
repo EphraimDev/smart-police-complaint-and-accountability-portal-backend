@@ -50,6 +50,7 @@ import { TransactionHelper } from "@shared/database";
 import { generateComplaintReference } from "@common/utils";
 import { PaginatedResult } from "@shared/pagination/pagination.dto";
 import { LocalStorageProvider } from "@integrations/storage";
+import { ComplaintAssignmentEntity } from "@modules/complaint-assignments/entities/complaint-assignment.entity";
 
 type UploadedComplaintFile = {
   originalname: string;
@@ -100,11 +101,7 @@ export type ComplaintDetailResult = Omit<
 > & {
   station: PoliceStationEntity | null;
   attachments: ComplaintTrackingAttachment[];
-  assignedOfficers: Array<
-    ComplaintOfficerEntity & {
-      officer: OfficerEntity | null;
-    }
-  >;
+  assignedOfficers: Array<OfficerEntity> | null;
   complainantName?: string | null;
   complainantEmail?: string | null;
   complainantPhone?: string | null;
@@ -122,8 +119,8 @@ export class ComplaintsService {
     private readonly stationRepository: Repository<PoliceStationEntity>,
     @InjectRepository(ComplaintNoteEntity)
     private readonly noteRepository: Repository<ComplaintNoteEntity>,
-    @InjectRepository(ComplaintOfficerEntity)
-    private readonly complaintOfficerRepository: Repository<ComplaintOfficerEntity>,
+    @InjectRepository(ComplaintAssignmentEntity)
+    private readonly complaintAssignmentRepository: Repository<ComplaintAssignmentEntity>,
     @InjectRepository(OfficerEntity)
     private readonly officerRepository: Repository<OfficerEntity>,
     @InjectRepository(ComplaintStatusHistoryEntity)
@@ -288,7 +285,6 @@ export class ComplaintsService {
       Permission.COMPLAINT_UPDATE,
     );
     const complaint = await this.findComplaintEntityById(id);
-    console.log("Complaint found:", hasSensitiveAccess);
     const attachmentRecords = await this.dataSource
       .getRepository(EvidenceEntity)
       .find({
@@ -309,22 +305,14 @@ export class ComplaintsService {
             where: { id: complaint.stationId },
           })
         : null,
-      this.complaintOfficerRepository.find({
+      this.complaintAssignmentRepository.find({
         where: { complaintId: complaint.id },
-        order: { createdAt: "ASC" },
+        relations: ["assignee"],
+        order: { createdAt: "DESC" },
       }),
     ]);
     const officersById = new Map<string, OfficerEntity>();
-    if (assignedOfficerLinks.length > 0) {
-      const officers = await this.officerRepository.findBy({
-        id: In(assignedOfficerLinks.map(({ officerId }) => officerId)),
-      });
-      officers.forEach((officer) => officersById.set(officer.id, officer));
-    }
-    const assignedOfficers = assignedOfficerLinks.map((link) => ({
-      ...link,
-      officer: officersById.get(link.officerId) ?? null,
-    }));
+
     const {
       stationId: _stationId,
       complainantNameEncrypted,
@@ -339,6 +327,15 @@ export class ComplaintsService {
     const encryptionKey = hasSensitiveAccess
       ? this.configService.get<string>("auth.fieldEncryptionKey")!
       : null;
+    const assignedOfficers: OfficerEntity[] = []
+    for (const link of assignedOfficerLinks) {
+      if (link.assignee) {
+        if (!officersById.has(link.assignee.id)) {
+          officersById.set(link.assignee.id, link.assignee);
+          assignedOfficers.push(link.assignee);
+        }
+      }
+    }
 
     return {
       ...complaintData,
@@ -527,6 +524,12 @@ export class ComplaintsService {
     if (allowedSorts.includes(sortField)) {
       qb.orderBy(`c.${sortField}`, filters.sortOrder || "DESC");
     }
+
+    qb.leftJoin(
+      PoliceStationEntity,
+      "ps",
+      "ps.id = c.stationId AND c.stationId IS NOT NULL",
+    );
 
     const [items, total] = await qb
       .skip(filters.skip)

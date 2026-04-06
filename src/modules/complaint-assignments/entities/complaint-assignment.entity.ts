@@ -1,6 +1,9 @@
-import { Entity, Column, Index } from "typeorm";
+import { Entity, Column, Index, ManyToOne, JoinColumn } from "typeorm";
 import { AuditableEntity } from "@shared/base/base.entity";
 import { AssignmentStatus } from "@common/enums";
+import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
+import { OfficerEntity } from "@modules/officers/entities/officer.entity";
+import { UserEntity } from "@modules/users/entities/user.entity";
 
 @Entity("complaint_assignments")
 @Index(["complaintId"])
@@ -16,6 +19,14 @@ export class ComplaintAssignmentEntity extends AuditableEntity {
 
   @Column({ name: "assigned_by_id", type: "uuid" })
   assignedById!: string;
+
+  @ManyToOne(() => OfficerEntity, { nullable: true })
+  @JoinColumn({ name: "assignee_id" })
+  assignee!: OfficerEntity | null;
+
+  @ManyToOne(() => UserEntity, { nullable: true })
+  @JoinColumn({ name: "assigned_by_id" })
+  assignedBy!: UserEntity | null;
 
   @Column({
     type: "enum",
