@@ -5,7 +5,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, DataSource, EntityManager } from "typeorm";
+import { Repository, DataSource, EntityManager, In } from "typeorm";
 import { ConfigService } from "@nestjs/config";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
@@ -18,11 +18,15 @@ import {
   ComplaintNoteEntity,
 } from "./entities/complaint.entity";
 import { ComplaintStatusHistoryEntity } from "@modules/complaint-status-history/entities/complaint-status-history.entity";
-import { ComplaintOfficerEntity } from "@modules/officers/entities/officer.entity";
+import {
+  ComplaintOfficerEntity,
+  OfficerEntity,
+} from "@modules/officers/entities/officer.entity";
 import {
   EvidenceEntity,
   EvidenceChainOfCustodyEntity,
 } from "@modules/evidence/entities/evidence.entity";
+import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 import {
   CreateComplaintDto,
   UpdateComplaintDto,
@@ -37,8 +41,10 @@ import {
   EvidenceAccessLevel,
   EvidenceType,
   NotificationType,
+  Permission,
 } from "@common/enums";
 import { QUEUE_NAMES } from "@common/constants";
+import { RequestUser } from "@common/interfaces";
 import { EncryptionUtil } from "@shared/security";
 import { TransactionHelper } from "@shared/database";
 import { generateComplaintReference } from "@common/utils";
@@ -83,6 +89,28 @@ export type ComplaintTrackingResult = Omit<
   statusHistory: ComplaintTrackingHistoryItem[];
 };
 
+export type ComplaintDetailResult = Omit<
+  ComplaintEntity,
+  | "complainantNameEncrypted"
+  | "complainantEmailEncrypted"
+  | "complainantPhoneEncrypted"
+  | "complainantAddressEncrypted"
+  | "trackingToken"
+  | "stationId"
+> & {
+  station: PoliceStationEntity | null;
+  attachments: ComplaintTrackingAttachment[];
+  assignedOfficers: Array<
+    ComplaintOfficerEntity & {
+      officer: OfficerEntity | null;
+    }
+  >;
+  complainantName?: string | null;
+  complainantEmail?: string | null;
+  complainantPhone?: string | null;
+  complainantAddress?: string | null;
+};
+
 @Injectable()
 export class ComplaintsService {
   private readonly logger = new Logger(ComplaintsService.name);
@@ -90,10 +118,14 @@ export class ComplaintsService {
   constructor(
     @InjectRepository(ComplaintEntity)
     private readonly complaintRepository: Repository<ComplaintEntity>,
+    @InjectRepository(PoliceStationEntity)
+    private readonly stationRepository: Repository<PoliceStationEntity>,
     @InjectRepository(ComplaintNoteEntity)
     private readonly noteRepository: Repository<ComplaintNoteEntity>,
     @InjectRepository(ComplaintOfficerEntity)
     private readonly complaintOfficerRepository: Repository<ComplaintOfficerEntity>,
+    @InjectRepository(OfficerEntity)
+    private readonly officerRepository: Repository<OfficerEntity>,
     @InjectRepository(ComplaintStatusHistoryEntity)
     private readonly statusHistoryRepository: Repository<ComplaintStatusHistoryEntity>,
     private readonly dataSource: DataSource,
@@ -248,7 +280,100 @@ export class ComplaintsService {
     }
   }
 
-  async findById(id: string): Promise<ComplaintEntity> {
+  async findById(
+    id: string,
+    user?: RequestUser,
+  ): Promise<ComplaintDetailResult> {
+    const hasSensitiveAccess = user?.permissions.includes(
+      Permission.COMPLAINT_UPDATE,
+    );
+    const complaint = await this.findComplaintEntityById(id);
+    console.log("Complaint found:", hasSensitiveAccess);
+    const attachmentRecords = await this.dataSource
+      .getRepository(EvidenceEntity)
+      .find({
+        where: { complaintId: complaint.id },
+        order: { createdAt: "ASC" },
+      });
+    const attachments = await Promise.all(
+      attachmentRecords.map(async (attachment) => ({
+        ...attachment,
+        fileUrl: await this.storageProvider.getSignedUrl(
+          attachment.storagePath,
+        ),
+      })),
+    );
+    const [station, assignedOfficerLinks] = await Promise.all([
+      complaint.stationId
+        ? this.stationRepository.findOne({
+            where: { id: complaint.stationId },
+          })
+        : null,
+      this.complaintOfficerRepository.find({
+        where: { complaintId: complaint.id },
+        order: { createdAt: "ASC" },
+      }),
+    ]);
+    const officersById = new Map<string, OfficerEntity>();
+    if (assignedOfficerLinks.length > 0) {
+      const officers = await this.officerRepository.findBy({
+        id: In(assignedOfficerLinks.map(({ officerId }) => officerId)),
+      });
+      officers.forEach((officer) => officersById.set(officer.id, officer));
+    }
+    const assignedOfficers = assignedOfficerLinks.map((link) => ({
+      ...link,
+      officer: officersById.get(link.officerId) ?? null,
+    }));
+    const {
+      stationId: _stationId,
+      complainantNameEncrypted,
+      complainantEmailEncrypted,
+      complainantPhoneEncrypted,
+      complainantAddressEncrypted,
+      trackingToken: _trackingToken,
+      ...complaintData
+    } = complaint;
+    void _stationId;
+    void _trackingToken;
+    const encryptionKey = hasSensitiveAccess
+      ? this.configService.get<string>("auth.fieldEncryptionKey")!
+      : null;
+
+    return {
+      ...complaintData,
+      station,
+      attachments,
+      assignedOfficers,
+      ...(hasSensitiveAccess
+        ? {
+            complainantName: complainantNameEncrypted
+              ? EncryptionUtil.decrypt(complainantNameEncrypted, encryptionKey!)
+              : null,
+            complainantEmail: complainantEmailEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantEmailEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+            complainantPhone: complainantPhoneEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantPhoneEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+            complainantAddress: complainantAddressEncrypted
+              ? EncryptionUtil.decrypt(
+                  complainantAddressEncrypted,
+                  encryptionKey!,
+                )
+              : null,
+          }
+        : {}),
+    };
+  }
+
+  private async findComplaintEntityById(id: string): Promise<ComplaintEntity> {
     const complaint = await this.complaintRepository.findOne({ where: { id } });
     if (!complaint) throw new NotFoundException("Complaint not found");
     return complaint;
@@ -273,7 +398,9 @@ export class ComplaintsService {
     const attachments = await Promise.all(
       attachmentRecords.map(async (attachment) => ({
         ...attachment,
-        fileUrl: await this.storageProvider.getSignedUrl(attachment.storagePath),
+        fileUrl: await this.storageProvider.getSignedUrl(
+          attachment.storagePath,
+        ),
       })),
     );
     const isTrackingTokenAuthenticated = complaint.trackingToken === reference;
@@ -414,7 +541,7 @@ export class ComplaintsService {
     dto: UpdateComplaintDto,
     actorId: string,
   ): Promise<ComplaintEntity> {
-    const complaint = await this.findById(id);
+    const complaint = await this.findComplaintEntityById(id);
 
     const allowedForUpdate = [
       ComplaintStatus.SUBMITTED,
@@ -527,7 +654,7 @@ export class ComplaintsService {
     dto: AddComplaintNoteDto,
     actorId: string,
   ): Promise<ComplaintNoteEntity> {
-    await this.findById(complaintId);
+    await this.findComplaintEntityById(complaintId);
 
     const note = this.noteRepository.create({
       complaintId,
@@ -583,10 +710,18 @@ export class ComplaintsService {
         path.basename(file.originalname, path.extname(file.originalname)),
       );
       const generatedFileName = `${uuidv4()}-${safeBaseName}${extension}`;
-      const storagePath = path.posix.join("complaints", complaint.id, generatedFileName);
+      const storagePath = path.posix.join(
+        "complaints",
+        complaint.id,
+        generatedFileName,
+      );
       const fileHash = createHash("sha256").update(file.buffer).digest("hex");
 
-      await this.storageProvider.upload(storagePath, file.buffer, file.mimetype);
+      await this.storageProvider.upload(
+        storagePath,
+        file.buffer,
+        file.mimetype,
+      );
       uploadedPaths.push(storagePath);
 
       const evidence = manager.create(EvidenceEntity, {
@@ -644,7 +779,9 @@ export class ComplaintsService {
       [],
     );
     if (allowedTypes.length > 0 && !allowedTypes.includes(file.mimetype)) {
-      throw new BadRequestException(`File type ${file.mimetype} is not allowed`);
+      throw new BadRequestException(
+        `File type ${file.mimetype} is not allowed`,
+      );
     }
 
     const maxSize = this.configService.get<number>("app.maxFileSize", 10485760);
@@ -692,11 +829,13 @@ export class ComplaintsService {
   }
 
   private sanitizeFileBaseName(originalName: string): string {
-    return originalName
-      .replace(/[^a-zA-Z0-9-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 80) || "file";
+    return (
+      originalName
+        .replace(/[^a-zA-Z0-9-_]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 80) || "file"
+    );
   }
 
   private async cleanupUploadedFiles(uploadedPaths: string[]): Promise<void> {

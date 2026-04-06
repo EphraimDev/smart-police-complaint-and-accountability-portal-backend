@@ -8,13 +8,17 @@ import {
   ComplaintNoteEntity,
 } from "./entities/complaint.entity";
 import { ComplaintStatusHistoryEntity } from "@modules/complaint-status-history/entities/complaint-status-history.entity";
-import { ComplaintOfficerEntity } from "@modules/officers/entities/officer.entity";
+import {
+  ComplaintOfficerEntity,
+  OfficerEntity,
+} from "@modules/officers/entities/officer.entity";
 import { AuditLogModule } from "@modules/audit-logs/audit-log.module";
 import { QUEUE_NAMES } from "@common/constants";
 import {
   EvidenceEntity,
   EvidenceChainOfCustodyEntity,
 } from "@modules/evidence/entities/evidence.entity";
+import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 import { LocalStorageProvider } from "@integrations/storage";
 
 @Module({
@@ -24,8 +28,10 @@ import { LocalStorageProvider } from "@integrations/storage";
       ComplaintNoteEntity,
       ComplaintStatusHistoryEntity,
       ComplaintOfficerEntity,
+      OfficerEntity,
       EvidenceEntity,
       EvidenceChainOfCustodyEntity,
+      PoliceStationEntity,
     ]),
     BullModule.registerQueue(
       { name: QUEUE_NAMES.AI_ANALYSIS },

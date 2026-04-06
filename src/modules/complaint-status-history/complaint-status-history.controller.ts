@@ -24,6 +24,24 @@ export class ComplaintStatusHistoryController {
     return this.repository.find({
       where: { complaintId },
       order: { createdAt: "ASC" },
+      relations: { changedBy: true },
+      select: {
+        id: true,
+        complaintId: true,
+        previousStatus: true,
+        newStatus: true,
+        changedById: true,
+        reasonCode: true,
+        reason: true,
+        metadata: true,
+        createdAt: true,
+        updatedAt: true,
+        changedBy: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
     });
   }
 }

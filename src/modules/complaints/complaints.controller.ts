@@ -121,8 +121,11 @@ export class ComplaintsController {
   @Get(":id")
   @RequirePermissions(Permission.COMPLAINT_READ)
   @ApiOperation({ summary: "Get complaint by ID" })
-  async findById(@Param("id", ParseUUIDPipe) id: string) {
-    return this.complaintsService.findById(id);
+  async findById(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.complaintsService.findById(id, user);
   }
 
   @Put(":id")

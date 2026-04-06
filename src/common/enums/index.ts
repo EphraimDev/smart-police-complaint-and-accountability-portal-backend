@@ -7,7 +7,7 @@ export enum UserRole {
   INTERNAL_AFFAIRS_OFFICER = "internal_affairs_officer",
   OVERSIGHT_OFFICER = "oversight_officer",
 }
-
+ 
 export enum Permission {
   // Complaint permissions
   COMPLAINT_CREATE = "complaint:create",

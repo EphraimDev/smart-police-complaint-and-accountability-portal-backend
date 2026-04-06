@@ -6,6 +6,7 @@ import { UserEntity } from "@modules/users/entities/user.entity";
 import { OfficerEntity } from "@modules/officers/entities/officer.entity";
 import { PoliceStationEntity } from "@modules/police-stations/entities/police-station.entity";
 import { EscalationRecordEntity } from "@modules/oversight/entities/escalation-record.entity";
+import { ComplaintStatus } from "@common/enums";
 
 @Injectable()
 export class AdminService {
@@ -38,14 +39,17 @@ export class AdminService {
       this.complaintRepository.count(),
       this.complaintRepository.count({
         where: [
-          { status: "SUBMITTED" as any },
-          { status: "UNDER_REVIEW" as any },
-          { status: "UNDER_INVESTIGATION" as any },
-          { status: "ASSIGNED" as any },
+          { status: ComplaintStatus.SUBMITTED },
+          { status: ComplaintStatus.UNDER_REVIEW },
+          { status: ComplaintStatus.UNDER_INVESTIGATION },
+          { status: ComplaintStatus.ASSIGNED },
         ],
       }),
       this.complaintRepository.count({
-        where: [{ status: "RESOLVED" as any }, { status: "CLOSED" as any }],
+        where: [
+          { status: ComplaintStatus.RESOLVED },
+          { status: ComplaintStatus.CLOSED },
+        ],
       }),
       this.userRepository.count(),
       this.userRepository.count({ where: { isActive: true } }),
@@ -58,7 +62,11 @@ export class AdminService {
       .createQueryBuilder("c")
       .where("c.slaDueDate < NOW()")
       .andWhere("c.status NOT IN (:...terminal)", {
-        terminal: ["RESOLVED", "CLOSED", "WITHDRAWN"],
+        terminal: [
+          ComplaintStatus.RESOLVED,
+          ComplaintStatus.CLOSED,
+          ComplaintStatus.WITHDRAWN,
+        ],
       })
       .getCount();
 

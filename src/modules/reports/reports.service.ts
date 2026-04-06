@@ -4,6 +4,7 @@ import { Repository, Between, FindOptionsWhere } from "typeorm";
 import { ComplaintEntity } from "@modules/complaints/entities/complaint.entity";
 import { EscalationRecordEntity } from "@modules/oversight/entities/escalation-record.entity";
 import { ReportFiltersDto } from "./dto/reports.dto";
+import { ComplaintStatus } from "@common/enums";
 
 @Injectable()
 export class ReportsService {
@@ -94,7 +95,7 @@ export class ReportsService {
     const qb = this.complaintRepository
       .createQueryBuilder("c")
       .where("c.status IN (:...resolved)", {
-        resolved: ["RESOLVED", "CLOSED"],
+        resolved: [ComplaintStatus.RESOLVED, ComplaintStatus.CLOSED],
       });
 
     if (filters.startDate && filters.endDate) {
@@ -133,7 +134,11 @@ export class ReportsService {
       .createQueryBuilder("c")
       .where("c.slaDueDate < NOW()")
       .andWhere("c.status NOT IN (:...terminal)", {
-        terminal: ["RESOLVED", "CLOSED", "WITHDRAWN"],
+        terminal: [
+          ComplaintStatus.RESOLVED,
+          ComplaintStatus.CLOSED,
+          ComplaintStatus.WITHDRAWN,
+        ],
       });
 
     if (filters.stationId) {

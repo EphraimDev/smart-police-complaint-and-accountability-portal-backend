@@ -1,12 +1,78 @@
 import { DataSource } from "typeorm";
 import * as argon2 from "argon2";
 import { v4 as uuidv4 } from "uuid";
+import { Permission } from "@common/enums";
 
 /**
  * Seeds initial roles, permissions, role-permission mappings, and an admin user.
  * Run via: npx ts-node -r tsconfig-paths/register src/seeds/initial-seed.ts
  */
 async function seed() {
+  const legacyPermissions = [
+    "CREATE_COMPLAINT",
+    "VIEW_COMPLAINT",
+    "VIEW_OWN_COMPLAINTS",
+    "UPDATE_COMPLAINT",
+    "DELETE_COMPLAINT",
+    "ASSIGN_COMPLAINT",
+    "REASSIGN_COMPLAINT",
+    "UPDATE_COMPLAINT_STATUS",
+    "ADD_COMPLAINT_NOTE",
+    "VIEW_COMPLAINT_TIMELINE",
+    "UPLOAD_EVIDENCE",
+    "VIEW_EVIDENCE",
+    "DELETE_EVIDENCE",
+    "VERIFY_EVIDENCE",
+    "CREATE_OFFICER",
+    "VIEW_OFFICER",
+    "UPDATE_OFFICER",
+    "DELETE_OFFICER",
+    "CREATE_STATION",
+    "VIEW_STATION",
+    "UPDATE_STATION",
+    "DELETE_STATION",
+    "CREATE_USER",
+    "VIEW_USER",
+    "UPDATE_USER",
+    "DELETE_USER",
+    "ASSIGN_ROLES",
+    "CREATE_ROLE",
+    "VIEW_ROLE",
+    "UPDATE_ROLE",
+    "DELETE_ROLE",
+    "ASSIGN_PERMISSIONS",
+    "ESCALATE_COMPLAINT",
+    "REVIEW_ESCALATION",
+    "VIEW_ESCALATIONS",
+    "REQUEST_AI_ANALYSIS",
+    "VIEW_AI_RESULTS",
+    "REVIEW_AI_RESULTS",
+    "VIEW_REPORTS",
+    "GENERATE_REPORTS",
+    "VIEW_DASHBOARD",
+    "MANAGE_SYSTEM",
+    "VIEW_AUDIT_LOGS",
+    "VIEW_NOTIFICATIONS",
+    "MANAGE_NOTIFICATIONS",
+  ];
+
+  const getPermissionModule = (permission: string): string => {
+    if (permission.startsWith("complaint:")) return "complaints";
+    if (permission.startsWith("evidence:")) return "evidence";
+    if (permission.startsWith("officer:")) return "officers";
+    if (permission.startsWith("station:")) return "stations";
+    if (permission.startsWith("user:")) return "users";
+    if (permission.startsWith("role:")) return "access_control";
+    if (permission.startsWith("oversight:")) return "oversight";
+    if (permission.startsWith("ai:")) return "ai";
+    if (permission.startsWith("report:")) return "reports";
+    if (permission.startsWith("audit:") || permission.startsWith("admin:")) {
+      return "admin";
+    }
+    if (permission.startsWith("notification:")) return "notifications";
+    return "system";
+  };
+
   // Use the same TypeORM config as the CLI
   const { default: dataSource } = await import("../config/typeorm.config");
   const ds: DataSource = dataSource;
@@ -21,74 +87,22 @@ async function seed() {
 
   try {
     // ── Permissions ──────────────────────────────────────────────────
-    const permissions = [
-      // Complaints
-      "CREATE_COMPLAINT",
-      "VIEW_COMPLAINT",
-      "VIEW_OWN_COMPLAINTS",
-      "UPDATE_COMPLAINT",
-      "DELETE_COMPLAINT",
-      "ASSIGN_COMPLAINT",
-      "REASSIGN_COMPLAINT",
-      "UPDATE_COMPLAINT_STATUS",
-      "ADD_COMPLAINT_NOTE",
-      "VIEW_COMPLAINT_TIMELINE",
-      // Evidence
-      "UPLOAD_EVIDENCE",
-      "VIEW_EVIDENCE",
-      "DELETE_EVIDENCE",
-      "VERIFY_EVIDENCE",
-      // Officers
-      "CREATE_OFFICER",
-      "VIEW_OFFICER",
-      "UPDATE_OFFICER",
-      "DELETE_OFFICER",
-      // Stations
-      "CREATE_STATION",
-      "VIEW_STATION",
-      "UPDATE_STATION",
-      "DELETE_STATION",
-      // Users
-      "CREATE_USER",
-      "VIEW_USER",
-      "UPDATE_USER",
-      "DELETE_USER",
-      "ASSIGN_ROLES",
-      // Roles
-      "CREATE_ROLE",
-      "VIEW_ROLE",
-      "UPDATE_ROLE",
-      "DELETE_ROLE",
-      "ASSIGN_PERMISSIONS",
-      // Oversight
-      "ESCALATE_COMPLAINT",
-      "REVIEW_ESCALATION",
-      "VIEW_ESCALATIONS",
-      // AI
-      "REQUEST_AI_ANALYSIS",
-      "VIEW_AI_RESULTS",
-      "REVIEW_AI_RESULTS",
-      // Reports
-      "VIEW_REPORTS",
-      "GENERATE_REPORTS",
-      // Admin
-      "VIEW_DASHBOARD",
-      "MANAGE_SYSTEM",
-      "VIEW_AUDIT_LOGS",
-      // Notifications
-      "VIEW_NOTIFICATIONS",
-      "MANAGE_NOTIFICATIONS",
-    ];
+    const permissions = Object.values(Permission);
 
-    const permissionIds: Record<string, string> = {};
     for (const perm of permissions) {
       const id = uuidv4();
-      permissionIds[perm] = id;
       await queryRunner.query(
-        `INSERT INTO permissions (id, name, description, "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING`,
-        [id, perm, perm.replace(/_/g, " ").toLowerCase()],
+        `INSERT INTO permissions (id, name, description, module)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (name) DO UPDATE
+         SET description = EXCLUDED.description,
+             module = EXCLUDED.module`,
+        [
+          id,
+          perm,
+          perm.replace(/[:_]/g, " "),
+          getPermissionModule(perm),
+        ],
       );
     }
 
@@ -100,73 +114,63 @@ async function seed() {
       },
       ADMIN: {
         id: uuidv4(),
-        permissions: permissions.filter((p) => p !== "MANAGE_SYSTEM"),
+        permissions: permissions,
       },
       POLICE_ADMIN: {
         id: uuidv4(),
         permissions: [
-          "VIEW_COMPLAINT",
-          "UPDATE_COMPLAINT",
-          "ASSIGN_COMPLAINT",
-          "REASSIGN_COMPLAINT",
-          "UPDATE_COMPLAINT_STATUS",
-          "ADD_COMPLAINT_NOTE",
-          "VIEW_COMPLAINT_TIMELINE",
-          "UPLOAD_EVIDENCE",
-          "VIEW_EVIDENCE",
-          "CREATE_OFFICER",
-          "VIEW_OFFICER",
-          "UPDATE_OFFICER",
-          "CREATE_STATION",
-          "VIEW_STATION",
-          "UPDATE_STATION",
-          "VIEW_REPORTS",
-          "VIEW_DASHBOARD",
+          Permission.COMPLAINT_READ,
+          Permission.COMPLAINT_UPDATE,
+          Permission.COMPLAINT_ASSIGN,
+          Permission.EVIDENCE_UPLOAD,
+          Permission.EVIDENCE_READ,
+          Permission.OFFICER_CREATE,
+          Permission.OFFICER_READ,
+          Permission.OFFICER_UPDATE,
+          Permission.STATION_CREATE,
+          Permission.STATION_READ,
+          Permission.STATION_UPDATE,
+          Permission.REPORT_VIEW,
+          Permission.ADMIN_DASHBOARD,
         ],
       },
       INVESTIGATOR: {
         id: uuidv4(),
         permissions: [
-          "VIEW_COMPLAINT",
-          "UPDATE_COMPLAINT",
-          "UPDATE_COMPLAINT_STATUS",
-          "ADD_COMPLAINT_NOTE",
-          "VIEW_COMPLAINT_TIMELINE",
-          "UPLOAD_EVIDENCE",
-          "VIEW_EVIDENCE",
-          "VERIFY_EVIDENCE",
-          "VIEW_OFFICER",
-          "VIEW_STATION",
-          "REQUEST_AI_ANALYSIS",
-          "VIEW_AI_RESULTS",
+          Permission.COMPLAINT_READ,
+          Permission.COMPLAINT_UPDATE,
+          Permission.EVIDENCE_UPLOAD,
+          Permission.EVIDENCE_READ,
+          Permission.OFFICER_READ,
+          Permission.STATION_READ,
+          Permission.AI_REQUEST_ANALYSIS,
+          Permission.AI_VIEW_RESULTS,
         ],
       },
       OVERSIGHT_BODY: {
         id: uuidv4(),
         permissions: [
-          "VIEW_COMPLAINT",
-          "VIEW_COMPLAINT_TIMELINE",
-          "VIEW_EVIDENCE",
-          "VIEW_OFFICER",
-          "VIEW_STATION",
-          "ESCALATE_COMPLAINT",
-          "REVIEW_ESCALATION",
-          "VIEW_ESCALATIONS",
-          "VIEW_AI_RESULTS",
-          "REVIEW_AI_RESULTS",
-          "VIEW_REPORTS",
-          "GENERATE_REPORTS",
-          "VIEW_DASHBOARD",
-          "VIEW_AUDIT_LOGS",
+          Permission.COMPLAINT_READ,
+          Permission.EVIDENCE_READ,
+          Permission.OFFICER_READ,
+          Permission.STATION_READ,
+          Permission.COMPLAINT_ESCALATE,
+          Permission.OVERSIGHT_VIEW,
+          Permission.OVERSIGHT_ACTION,
+          Permission.AI_VIEW_RESULTS,
+          Permission.AI_REVIEW,
+          Permission.REPORT_VIEW,
+          Permission.REPORT_EXPORT,
+          Permission.ADMIN_DASHBOARD,
+          Permission.AUDIT_READ,
         ],
       },
       COMPLAINANT: {
         id: uuidv4(),
         permissions: [
-          "CREATE_COMPLAINT",
-          "VIEW_OWN_COMPLAINTS",
-          "UPLOAD_EVIDENCE",
-          "VIEW_NOTIFICATIONS",
+          Permission.COMPLAINT_CREATE,
+          Permission.COMPLAINT_READ_OWN,
+          Permission.EVIDENCE_UPLOAD,
         ],
       },
       PUBLIC: {
@@ -177,8 +181,8 @@ async function seed() {
 
     for (const [roleName, roleData] of Object.entries(roles)) {
       await queryRunner.query(
-        `INSERT INTO roles (id, name, description, "isSystem", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, true, NOW(), NOW())
+      `INSERT INTO roles (id, name, description, is_system)
+         VALUES ($1, $2, $3, true)
          ON CONFLICT (name) DO NOTHING`,
         [roleData.id, roleName, `${roleName.replace(/_/g, " ")} role`],
       );
@@ -196,7 +200,7 @@ async function seed() {
           );
           if (roleRow.length > 0) {
             await queryRunner.query(
-              `INSERT INTO role_permissions ("rolesId", "permissionsId")
+              `INSERT INTO role_permissions (role_id, permission_id)
                VALUES ($1, $2)
                ON CONFLICT DO NOTHING`,
               [roleRow[0].id, permRow[0].id],
@@ -206,13 +210,27 @@ async function seed() {
       }
     }
 
+    await queryRunner.query(
+      `DELETE FROM role_permissions rp
+       USING permissions p
+       WHERE rp.permission_id = p.id
+         AND p.name = ANY($1)`,
+      [legacyPermissions],
+    );
+
+    await queryRunner.query(
+      `DELETE FROM permissions
+       WHERE name = ANY($1)`,
+      [legacyPermissions],
+    );
+
     // ── Admin User ───────────────────────────────────────────────────
     const adminPassword = await argon2.hash("Admin@123456");
     const adminId = uuidv4();
 
     await queryRunner.query(
-      `INSERT INTO users (id, email, "passwordHash", "firstName", "lastName", "isActive", "isEmailVerified", "failedLoginAttempts", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5, true, true, 0, NOW(), NOW())
+      `INSERT INTO users (id, email, "passwordHash", "firstName", "lastName", is_active, is_email_verified, failed_login_attempts)
+       VALUES ($1, $2, $3, $4, $5, true, true, 0)
        ON CONFLICT (email) DO NOTHING`,
       [adminId, "admin@spcap.gov", adminPassword, "System", "Administrator"],
     );
@@ -228,7 +246,7 @@ async function seed() {
     );
     if (adminRow.length > 0 && superAdminRole.length > 0) {
       await queryRunner.query(
-        `INSERT INTO user_roles ("usersId", "rolesId")
+        `INSERT INTO user_roles (user_id, role_id)
          VALUES ($1, $2)
          ON CONFLICT DO NOTHING`,
         [adminRow[0].id, superAdminRole[0].id],

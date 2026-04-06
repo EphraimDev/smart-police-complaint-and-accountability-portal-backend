@@ -69,19 +69,32 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       ...(details && !isProduction ? { data: details } : {}),
     };
 
-    // this.logger.error(
-    //   JSON.stringify({
-    //     stage: "error-response",
-    //     method: request.method,
-    //     url: request.originalUrl,
-    //     statusCode: status,
-    //     correlationId,
-    //     request: sanitizeForLog(request.body),
-    //     response: sanitizeForLog(body),
-    //   }),
-    //   exception instanceof Error ? exception.stack : undefined,
-    //   "HTTP",
-    // );
+    const httpErrorLog = JSON.stringify({
+      stage: "error-response",
+      method: request.method,
+      url: request.originalUrl,
+      statusCode: status,
+      correlationId,
+      request: sanitizeForLog(request.body),
+      response: sanitizeForLog(body),
+      error:
+        exception instanceof Error
+          ? {
+              name: exception.name,
+              message: exception.message,
+            }
+          : exception,
+    });
+
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(
+        httpErrorLog,
+        exception instanceof Error ? exception.stack : undefined,
+        "HTTP",
+      );
+    } else {
+      this.logger.warn(httpErrorLog, "HTTP");
+    }
 
     response.status(status).json(body);
   }

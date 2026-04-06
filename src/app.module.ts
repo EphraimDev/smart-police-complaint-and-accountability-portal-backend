@@ -43,6 +43,7 @@ import { FileAccessModule } from "@modules/file-access/file-access.module";
 // Jobs
 import { JobsModule } from "@jobs/jobs.module";
 import { WinstonLogger } from "@common/utils/winston.logger";
+import { LoggingModule } from "@common/logging/logging.module";
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { WinstonLogger } from "@common/utils/winston.logger";
         abortEarly: false,
       },
     }),
+    LoggingModule,
 
     // Database
     TypeOrmModule.forRootAsync({
@@ -159,15 +161,6 @@ import { WinstonLogger } from "@common/utils/winston.logger";
     {
       provide: APP_PIPE,
       useValue: globalValidationPipe,
-    },
-    {
-      provide: WinstonLogger,
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) =>
-        new WinstonLogger(
-          configService.get<string>("app.logLevel", "info"),
-          configService.get<string>("app.logDir", "./logs"),
-        ),
     },
   ],
 })

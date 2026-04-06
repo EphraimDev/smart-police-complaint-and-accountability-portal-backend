@@ -22,7 +22,7 @@
     "migration:generate": "npm run typeorm -- migration:generate -d src/config/typeorm.config.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/config/typeorm.config.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts",
-    "seed": "ts-node -r tsconfig-paths/register src/database/seeds/run-seed.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/seeds/initial-seed.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^10.2.0",

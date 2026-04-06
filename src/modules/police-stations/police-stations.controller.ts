@@ -7,23 +7,64 @@ import {
   Param,
   Query,
   ParseUUIDPipe,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+} from "@nestjs/swagger";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { PoliceStationsService } from "./police-stations.service";
 import {
   CreateStationDto,
   UpdateStationDto,
   ListStationsDto,
+  BulkUploadStationsResponseDto,
 } from "./dto/station.dto";
 import { RequirePermissions, CurrentUser } from "@common/decorators";
 import { Permission } from "@common/enums";
 import { RequestUser } from "@common/interfaces";
+
+type UploadedStationCsvFile = {
+  buffer: Buffer;
+  originalname: string;
+};
 
 @ApiTags("Police Stations")
 @ApiBearerAuth("access-token")
 @Controller("police-stations")
 export class PoliceStationsController {
   constructor(private readonly service: PoliceStationsService) {}
+
+  @Post("bulk-upload")
+  @UseInterceptors(FileInterceptor("file"))
+  @RequirePermissions(Permission.STATION_CREATE)
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      required: ["file"],
+      properties: {
+        file: {
+          type: "string",
+          format: "binary",
+          description:
+            "CSV with headers: code,name,address,region,parentStationId,phone,email",
+        },
+      },
+    },
+  })
+  @ApiOperation({ summary: "Bulk upload police stations from a CSV file" })
+  async bulkUpload(
+    @UploadedFile() file: UploadedStationCsvFile,
+    @CurrentUser() user: RequestUser,
+  ): Promise<BulkUploadStationsResponseDto> {
+    return this.service.bulkUpload(file, user.id);
+  }
 
   @Post()
   @RequirePermissions(Permission.STATION_CREATE)

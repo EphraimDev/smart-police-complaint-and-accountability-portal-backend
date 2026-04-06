@@ -2,10 +2,10 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { getRepositoryToken } from "@nestjs/typeorm";
 import { ConfigService } from "@nestjs/config";
 import { UnauthorizedException } from "@nestjs/common";
+import { DataSource } from "typeorm";
 import { AuthService } from "../src/modules/auth/auth.service";
 import {
   UserEntity,
-  RoleEntity,
   RefreshTokenEntity,
 } from "../src/modules/users/entities/user.entity";
 import { AuditLogService } from "../src/modules/audit-logs/audit-log.service";
@@ -16,6 +16,7 @@ describe("AuthService", () => {
   let userRepo: any;
   let refreshTokenRepo: any;
   let auditLogService: any;
+  let loginQueryBuilder: any;
 
   const mockUser: Partial<UserEntity> = {
     id: "user-uuid-1",
@@ -35,6 +36,13 @@ describe("AuthService", () => {
   });
 
   beforeEach(async () => {
+    loginQueryBuilder = {
+      addSelect: jest.fn().mockReturnThis(),
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      getOne: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -44,6 +52,7 @@ describe("AuthService", () => {
             findOne: jest.fn(),
             save: jest.fn(),
             update: jest.fn(),
+            createQueryBuilder: jest.fn().mockReturnValue(loginQueryBuilder),
           },
         },
         {
@@ -62,15 +71,21 @@ describe("AuthService", () => {
           useValue: {
             get: jest.fn((key: string) => {
               const configs: Record<string, any> = {
-                "auth.jwtSecret":
+                "auth.jwtAccessSecret":
                   "test-secret-key-that-is-at-least-32-chars-long!!",
-                "auth.jwtExpiresIn": "15m",
-                "auth.refreshTokenExpiresIn": "7d",
-                "auth.encryptionKey": "a".repeat(64),
+                "auth.jwtRefreshSecret":
+                  "refresh-secret-key-that-is-at-least-32-chars",
+                "auth.jwtAccessExpiration": "15m",
+                "auth.jwtRefreshExpiration": "7d",
+                "auth.jwtIssuer": "complaint-portal",
               };
               return configs[key];
             }),
           },
+        },
+        {
+          provide: DataSource,
+          useValue: {},
         },
         {
           provide: AuditLogService,
@@ -93,7 +108,7 @@ describe("AuthService", () => {
 
   describe("login", () => {
     it("should throw UnauthorizedException for non-existent user", async () => {
-      userRepo.findOne.mockResolvedValue(null);
+      loginQueryBuilder.getOne.mockResolvedValue(null);
 
       await expect(
         service.login(
@@ -105,7 +120,10 @@ describe("AuthService", () => {
     });
 
     it("should throw UnauthorizedException for inactive user", async () => {
-      userRepo.findOne.mockResolvedValue({ ...mockUser, isActive: false });
+      loginQueryBuilder.getOne.mockResolvedValue({
+        ...mockUser,
+        isActive: false,
+      });
 
       await expect(
         service.login(
@@ -116,9 +134,32 @@ describe("AuthService", () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
+    it("should throw UnauthorizedException when password login is unavailable", async () => {
+      loginQueryBuilder.getOne.mockResolvedValue({
+        ...mockUser,
+        passwordHash: null,
+      });
+
+      await expect(
+        service.login(
+          { email: "test@example.com", password: "Password123!" },
+          "127.0.0.1",
+          "test-agent",
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(auditLogService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: expect.anything(),
+          entityId: mockUser.id,
+          failureReason: "Password login unavailable for this account",
+          outcome: "failure",
+        }),
+      );
+    });
+
     it("should throw UnauthorizedException for wrong password", async () => {
-      userRepo.findOne.mockResolvedValue({ ...mockUser });
-      userRepo.save.mockResolvedValue({ ...mockUser, failedLoginAttempts: 1 });
+      loginQueryBuilder.getOne.mockResolvedValue({ ...mockUser });
 
       await expect(
         service.login(
@@ -130,8 +171,7 @@ describe("AuthService", () => {
     });
 
     it("should return tokens on successful login", async () => {
-      userRepo.findOne.mockResolvedValue({ ...mockUser });
-      userRepo.save.mockResolvedValue({ ...mockUser, failedLoginAttempts: 0 });
+      loginQueryBuilder.getOne.mockResolvedValue({ ...mockUser });
 
       const result = await service.login(
         { email: "test@example.com", password: "Password123!" },
@@ -139,9 +179,9 @@ describe("AuthService", () => {
         "test-agent",
       );
 
-      expect(result).toHaveProperty("accessToken");
-      expect(result).toHaveProperty("refreshToken");
-      expect(result).toHaveProperty("expiresIn");
+      expect(result).toHaveProperty("tokens.accessToken");
+      expect(result).toHaveProperty("tokens.refreshToken");
+      expect(result).toHaveProperty("tokens.expiresIn");
       expect(auditLogService.log).toHaveBeenCalled();
     });
   });

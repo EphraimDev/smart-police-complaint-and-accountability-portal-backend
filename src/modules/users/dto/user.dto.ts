@@ -27,10 +27,10 @@ export class CreateUserDto {
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ minLength: APP_CONSTANTS.MIN_PASSWORD_LENGTH })
-  @IsString()
-  @MinLength(APP_CONSTANTS.MIN_PASSWORD_LENGTH)
-  password!: string;
+  // @ApiProperty({ minLength: APP_CONSTANTS.MIN_PASSWORD_LENGTH })
+  // @IsString()
+  // @MinLength(APP_CONSTANTS.MIN_PASSWORD_LENGTH)
+  // password!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -106,4 +106,35 @@ export class UserResponseDto {
 
   @ApiProperty()
   createdAt!: Date;
+}
+
+export class BulkUploadUsersResponseDto {
+  @ApiProperty()
+  totalRows!: number;
+
+  @ApiProperty()
+  successCount!: number;
+
+  @ApiProperty()
+  failureCount!: number;
+
+  @ApiProperty({ type: [UserResponseDto] })
+  createdUsers!: UserResponseDto[];
+
+  @ApiProperty({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        row: { type: "number" },
+        email: { type: "string", nullable: true },
+        error: { type: "string" },
+      },
+    },
+  })
+  errors!: Array<{
+    row: number;
+    email: string | null;
+    error: string;
+  }>;
 }

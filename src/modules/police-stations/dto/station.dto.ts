@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsNotEmpty, IsOptional, IsString, IsUUID } from "class-validator";
 import { PaginationDto } from "@shared/pagination/pagination.dto";
+import { PoliceStationEntity } from "../entities/police-station.entity";
 
 export class CreateStationDto {
   @ApiProperty()
@@ -71,4 +72,35 @@ export class ListStationsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   region?: string;
+}
+
+export class BulkUploadStationsResponseDto {
+  @ApiProperty()
+  totalRows!: number;
+
+  @ApiProperty()
+  successCount!: number;
+
+  @ApiProperty()
+  failureCount!: number;
+
+  @ApiProperty({ type: [PoliceStationEntity] })
+  createdStations!: PoliceStationEntity[];
+
+  @ApiProperty({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        row: { type: "number" },
+        code: { type: "string", nullable: true },
+        error: { type: "string" },
+      },
+    },
+  })
+  errors!: Array<{
+    row: number;
+    code: string | null;
+    error: string;
+  }>;
 }

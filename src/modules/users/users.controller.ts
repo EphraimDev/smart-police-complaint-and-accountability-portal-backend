@@ -8,24 +8,65 @@ import {
   Param,
   Query,
   ParseUUIDPipe,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
-import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+} from "@nestjs/swagger";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { UsersService } from "./users.service";
 import {
   CreateUserDto,
   UpdateUserDto,
   ListUsersDto,
   AssignRolesDto,
+  BulkUploadUsersResponseDto,
 } from "./dto/user.dto";
 import { RequirePermissions, CurrentUser } from "@common/decorators";
 import { Permission } from "@common/enums";
 import { RequestUser } from "@common/interfaces";
+
+type UploadedUserCsvFile = {
+  buffer: Buffer;
+  originalname: string;
+};
 
 @ApiTags("Users")
 @ApiBearerAuth("access-token")
 @Controller("users")
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Post("bulk-upload")
+  @UseInterceptors(FileInterceptor("file"))
+  @RequirePermissions(Permission.USER_CREATE)
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      required: ["file"],
+      properties: {
+        file: {
+          type: "string",
+          format: "binary",
+          description:
+            "CSV with headers: firstName,lastName,email,password,phone and either role, roles, or roleIds. Use | to separate multiple values.",
+        },
+      },
+    },
+  })
+  @ApiOperation({ summary: "Bulk upload users from a CSV file" })
+  async bulkUpload(
+    @UploadedFile() file: UploadedUserCsvFile,
+    @CurrentUser() user: RequestUser,
+  ): Promise<BulkUploadUsersResponseDto> {
+    return this.usersService.bulkUpload(file, user.id);
+  }
 
   @Post()
   @RequirePermissions(Permission.USER_CREATE)

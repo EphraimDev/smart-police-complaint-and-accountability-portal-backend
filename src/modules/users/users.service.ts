@@ -3,10 +3,13 @@ import {
   NotFoundException,
   ConflictException,
   Logger,
+  BadRequestException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { In, Repository } from "typeorm";
 import * as argon2 from "argon2";
+import { plainToInstance } from "class-transformer";
+import { validateSync } from "class-validator";
 import { UserEntity, RoleEntity } from "./entities/user.entity";
 import {
   CreateUserDto,
@@ -14,6 +17,7 @@ import {
   ListUsersDto,
   UserResponseDto,
   AssignRolesDto,
+  BulkUploadUsersResponseDto,
 } from "./dto/user.dto";
 import { ConfigService } from "@nestjs/config";
 import { EncryptionUtil } from "@shared/security";
@@ -42,7 +46,7 @@ export class UsersService {
       throw new ConflictException("User with this email already exists");
     }
 
-    const passwordHash = await argon2.hash(dto.password);
+    // const passwordHash = await argon2.hash(dto.password);
 
     const encryptionKey = this.configService.get<string>(
       "auth.fieldEncryptionKey",
@@ -52,7 +56,7 @@ export class UsersService {
       firstName: dto.firstName,
       lastName: dto.lastName,
       email: dto.email.toLowerCase(),
-      passwordHash,
+      // passwordHash,
       phoneEncrypted: dto.phone
         ? EncryptionUtil.encrypt(dto.phone, encryptionKey)
         : null,
@@ -235,6 +239,94 @@ export class UsersService {
     return this.toResponseDto(saved);
   }
 
+  async bulkUpload(
+    file: { buffer: Buffer; originalname: string } | undefined,
+    actorId: string,
+  ): Promise<BulkUploadUsersResponseDto> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException("CSV file is required");
+    }
+
+    const rows = this.parseCsv(file.buffer.toString("utf-8"));
+    if (rows.length === 0) {
+      throw new BadRequestException("CSV file is empty");
+    }
+
+    const headers = rows[0].map((header) => header.trim());
+    const requiredHeaders = ["firstName", "lastName", "email"];
+    const missingHeaders = requiredHeaders.filter(
+      (header) => !headers.includes(header),
+    );
+
+    if (missingHeaders.length > 0) {
+      throw new BadRequestException(
+        `Missing required CSV headers: ${missingHeaders.join(", ")}`,
+      );
+    }
+
+    const createdUsers: UserResponseDto[] = [];
+    const errors: Array<{ row: number; email: string | null; error: string }> =
+      [];
+
+    for (let index = 1; index < rows.length; index += 1) {
+      const values = rows[index];
+      if (values.every((value) => value.trim() === "")) {
+        continue;
+      }
+
+      const rowData = Object.fromEntries(
+        headers.map((header, columnIndex) => [
+          header,
+          values[columnIndex]?.trim() ?? "",
+        ]),
+      );
+      const roles = await this.roleRepository.find({});
+      const dto = plainToInstance(CreateUserDto, {
+        firstName: rowData.firstName,
+        lastName: rowData.lastName,
+        email: rowData.email,
+        password: null,
+        phone: rowData.phone || undefined,
+        roleIds: await this.resolveBulkUploadRoleIds(roles, rowData),
+      });
+
+      const validationErrors = validateSync(dto, {
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      });
+
+      if (validationErrors.length > 0) {
+        errors.push({
+          row: index + 1,
+          email: rowData.email || null,
+          error: validationErrors
+            .flatMap((error) => Object.values(error.constraints || {}))
+            .join(", "),
+        });
+        continue;
+      }
+
+      try {
+        createdUsers.push(await this.create(dto, actorId));
+      } catch (error) {
+        errors.push({
+          row: index + 1,
+          email: rowData.email || null,
+          error:
+            error instanceof Error ? error.message : "Failed to create user",
+        });
+      }
+    }
+
+    return {
+      totalRows: rows.length - 1,
+      successCount: createdUsers.length,
+      failureCount: errors.length,
+      createdUsers,
+      errors,
+    };
+  }
+
   private toResponseDto(user: UserEntity): UserResponseDto {
     return {
       id: user.id,
@@ -245,5 +337,79 @@ export class UsersService {
       roles: user.roles?.map((r) => r.name) || [],
       createdAt: user.createdAt,
     };
+  }
+
+  private parseCsv(content: string): string[][] {
+    const normalized = content.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+    const rows: string[][] = [];
+    let currentRow: string[] = [];
+    let currentValue = "";
+    let inQuotes = false;
+
+    for (let index = 0; index < normalized.length; index += 1) {
+      const char = normalized[index];
+      const nextChar = normalized[index + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          currentValue += '"';
+          index += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (char === "," && !inQuotes) {
+        currentRow.push(currentValue);
+        currentValue = "";
+        continue;
+      }
+
+      if (char === "\n" && !inQuotes) {
+        currentRow.push(currentValue);
+        rows.push(currentRow);
+        currentRow = [];
+        currentValue = "";
+        continue;
+      }
+
+      currentValue += char;
+    }
+
+    if (currentValue.length > 0 || currentRow.length > 0) {
+      currentRow.push(currentValue);
+      rows.push(currentRow);
+    }
+
+    return rows;
+  }
+
+  private async resolveBulkUploadRoleIds(
+    roles: RoleEntity[],
+    rowData: Record<string, string>,
+  ): Promise<string[] | undefined> {
+    const roleNames = rowData.roles?.split("|");
+
+    if (!roleNames || roleNames.length === 0) {
+      return undefined;
+    }
+
+    const normalizedRoleNames = Array.from(
+      new Set(roleNames.map((name) => name.toUpperCase())),
+    );
+
+    const rolesByName = new Map(roles.map((role) => [role.name, role.id]));
+    const missingRoleNames = normalizedRoleNames.filter(
+      (name) => !rolesByName.has(name),
+    );
+
+    if (missingRoleNames.length > 0) {
+      throw new BadRequestException(
+        `Unknown role(s): ${missingRoleNames.join(", ")}`,
+      );
+    }
+
+    return normalizedRoleNames.map((name) => rolesByName.get(name)!);
   }
 }

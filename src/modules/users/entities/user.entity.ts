@@ -21,8 +21,8 @@ export class UserEntity extends SoftDeletableEntity {
   @Column({ unique: true, length: 255 })
   email!: string;
 
-  @Column({ select: false })
-  passwordHash!: string;
+  @Column({ type: "varchar", select: false, nullable: true })
+  passwordHash!: string | null;
 
   @Column({ name: "phone_encrypted", type: "text", nullable: true })
   phoneEncrypted!: string | null;

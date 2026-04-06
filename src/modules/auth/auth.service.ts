@@ -78,6 +78,19 @@ export class AuthService {
       );
     }
 
+    if (!user.passwordHash) {
+      await this.auditLogService.log({
+        action: AuditAction.LOGIN_FAILED,
+        entityType: "auth",
+        entityId: user.id,
+        ipAddress,
+        userAgent,
+        outcome: "failure",
+        failureReason: "Password login unavailable for this account",
+      });
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
     const isPasswordValid = await argon2.verify(
       user.passwordHash,
       dto.password,
@@ -297,6 +310,10 @@ export class AuthService {
 
     if (!user) {
       throw new BadRequestException("User not found");
+    }
+
+    if (!user.passwordHash) {
+      throw new BadRequestException("Password is not set for this user");
     }
 
     const isCurrentValid = await argon2.verify(
