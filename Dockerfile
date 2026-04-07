@@ -33,10 +33,10 @@ RUN mkdir -p uploads logs && chown -R appuser:appgroup uploads logs
 
 USER appuser
 
-EXPOSE 3000
+EXPOSE 3006
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget -q --spider http://localhost:3000/api/v1/health || exit 1
+  CMD wget -q --spider http://localhost:3006/api/v1/health || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/main.js"]
