@@ -70,7 +70,7 @@ import { LoggingModule } from "@common/logging/logging.module";
         database: configService.get<string>("database.database"),
         autoLoadEntities: true,
         synchronize: false,
-        migrations: [__dirname + "/migrations/*{.ts,.js}"],
+        migrations: [__dirname + "/../migrations/*{.ts,.js}"],
         migrationsRun: false,
         logging: configService.get<string>("database.logging") === "true",
       }),

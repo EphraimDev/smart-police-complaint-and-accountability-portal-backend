@@ -41,14 +41,10 @@ jobs:
           overwrite: true
           strip_components: 0
           source: >-
-            Dockerfile,
-            docker-compose.yml,
             package.json,
             package-lock.json,
-            tsconfig.json,
-            tsconfig.build.json,
-            nest-cli.json,
-            src
+            ecosystem.config.js,
+            dist
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
@@ -62,6 +58,8 @@ jobs:
             set -e
             cd "${{ secrets.DEPLOY_PATH }}"
             test -f .env || { echo ".env not found in ${{ secrets.DEPLOY_PATH }}"; exit 1; }
-            docker compose build api
-            docker compose up -d
-            docker compose exec -T api npm run migration:run
+            command -v pm2 >/dev/null 2>&1 || { echo "pm2 is not installed on the server"; exit 1; }
+            npm ci --omit=dev -f
+            npm run migration:run:prod
+            pm2 startOrReload ecosystem.config.js --update-env
+            pm2 save

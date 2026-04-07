@@ -2,7 +2,6 @@ import { DataSource } from "typeorm";
 import * as dotenv from "dotenv";
 
 dotenv.config();
-console.log(__dirname + "/../database/migrations/*{.ts,.js}");
 export default new DataSource({
   type: "postgres",
   host: process.env.DB_HOST,
