@@ -25,7 +25,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci -f
+        run: npm install -f
 
       - name: Build application
         run: npm run build
@@ -58,7 +58,7 @@ jobs:
             set -e
             cd "${{ secrets.DEPLOY_PATH }}"
             test -f .env || { echo ".env not found in ${{ secrets.DEPLOY_PATH }}"; exit 1; }
-            npm ci --omit=dev -f
+            npm install -f
             npm run migration:run:prod
             npx pm2 startOrReload ecosystem.config.js --update-env
             npx pm2 save
