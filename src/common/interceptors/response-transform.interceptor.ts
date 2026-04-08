@@ -31,7 +31,6 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
   ): Observable<ApiResponse<T> | EncryptedPayloadEnvelope> {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
-    let responseBodyForLog: ApiResponse<T> | undefined;
     const correlationId =
       (request.headers["x-correlation-id"] as string) || "unknown";
     response.setHeader("x-correlation-id", correlationId);
@@ -70,8 +69,6 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
           }
         }
 
-        responseBodyForLog = result;
-
         if (
           this.payloadEncryptionService.shouldEncryptResponse(
             request,
@@ -88,14 +85,7 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
 
         return result;
       }),
-      tap((result) => {
-        const responsePayload =
-          responseBodyForLog &&
-          typeof responseBodyForLog === "object" &&
-          "data" in responseBodyForLog
-            ? responseBodyForLog.data
-            : responseBodyForLog ?? result;
-
+      tap(() => {
         this.logger.log(
           JSON.stringify({
             stage: "response",
@@ -104,7 +94,7 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
             statusCode: response.statusCode,
             correlationId,
             request: sanitizeForLog(request.body),
-            response: sanitizeForLog(responsePayload),
+            response: "Successful",
           }),
           "HTTP",
         );

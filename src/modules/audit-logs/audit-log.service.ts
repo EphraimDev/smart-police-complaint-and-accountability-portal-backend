@@ -4,6 +4,7 @@ import { Repository } from "typeorm";
 import { AuditLogEntity } from "./entities/audit-log.entity";
 import { AuditAction } from "@common/enums";
 import { sanitizeForLog } from "@common/utils";
+import { UserEntity } from "@modules/users/entities/user.entity";
 
 export interface CreateAuditLogInput {
   actorId?: string | null;
@@ -105,10 +106,24 @@ export class AuditLogService {
     page: number = 1,
     limit: number = 20,
   ): Promise<[AuditLogEntity[], number]> {
-    return this.auditLogRepository.findAndCount({
-      order: { createdAt: "DESC" },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    return this.auditLogRepository
+      .createQueryBuilder("auditLog")
+      .leftJoinAndMapOne(
+        "auditLog.actor",
+        UserEntity,
+        "actor",
+        "actor.id = auditLog.actorId",
+      )
+      .select([
+        "auditLog",
+        "actor.id",
+        "actor.firstName",
+        "actor.lastName",
+        "actor.email",
+      ])
+      .orderBy("auditLog.createdAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
   }
 }
