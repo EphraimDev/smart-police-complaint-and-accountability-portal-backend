@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { BullModule } from "@nestjs/bullmq";
@@ -42,8 +42,11 @@ import { FileAccessModule } from "@modules/file-access/file-access.module";
 
 // Jobs
 import { JobsModule } from "@jobs/jobs.module";
-import { WinstonLogger } from "@common/utils/winston.logger";
 import { LoggingModule } from "@common/logging/logging.module";
+import {
+  PayloadDecryptionMiddleware,
+  PayloadEncryptionService,
+} from "@common/security";
 
 @Module({
   imports: [
@@ -134,6 +137,8 @@ import { LoggingModule } from "@common/logging/logging.module";
     FileAccessModule,
   ],
   providers: [
+    PayloadEncryptionService,
+    PayloadDecryptionMiddleware,
     // Global guards (order matters: auth first, then permissions)
     {
       provide: APP_GUARD,
@@ -164,4 +169,8 @@ import { LoggingModule } from "@common/logging/logging.module";
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(PayloadDecryptionMiddleware).forRoutes("*");
+  }
+}

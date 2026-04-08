@@ -10,22 +10,31 @@ import { ApiResponse } from "@common/interfaces";
 import { WinstonLogger } from "@common/utils/winston.logger";
 import { sanitizeForLog } from "@common/utils";
 import { Request, Response } from "express";
+import {
+  EncryptedPayloadEnvelope,
+  PayloadEncryptionService,
+} from "@common/security";
 
 @Injectable()
 export class ResponseTransformInterceptor<T> implements NestInterceptor<
   T,
-  ApiResponse<T>
+  ApiResponse<T> | EncryptedPayloadEnvelope
 > {
-  constructor(private readonly logger: WinstonLogger) {}
+  constructor(
+    private readonly logger: WinstonLogger,
+    private readonly payloadEncryptionService: PayloadEncryptionService,
+  ) {}
 
   intercept(
     context: ExecutionContext,
     next: CallHandler,
-  ): Observable<ApiResponse<T>> {
+  ): Observable<ApiResponse<T> | EncryptedPayloadEnvelope> {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
+    let responseBodyForLog: ApiResponse<T> | undefined;
     const correlationId =
       (request.headers["x-correlation-id"] as string) || "unknown";
+    response.setHeader("x-correlation-id", correlationId);
 
     this.logger.log(
       JSON.stringify({
@@ -61,9 +70,32 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
           }
         }
 
+        responseBodyForLog = result;
+
+        if (
+          this.payloadEncryptionService.shouldEncryptResponse(
+            request,
+            response,
+            result,
+          )
+        ) {
+          return this.payloadEncryptionService.createEncryptedResponseEnvelope(
+            result,
+            request,
+            response,
+          );
+        }
+
         return result;
       }),
       tap((result) => {
+        const responsePayload =
+          responseBodyForLog &&
+          typeof responseBodyForLog === "object" &&
+          "data" in responseBodyForLog
+            ? responseBodyForLog.data
+            : responseBodyForLog ?? result;
+
         this.logger.log(
           JSON.stringify({
             stage: "response",
@@ -72,7 +104,7 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
             statusCode: response.statusCode,
             correlationId,
             request: sanitizeForLog(request.body),
-            response: sanitizeForLog(result.data),
+            response: sanitizeForLog(responsePayload),
           }),
           "HTTP",
         );

@@ -25,6 +25,16 @@ export const validationSchema = Joi.object({
   JWT_ISSUER: Joi.string().default("complaint-portal"),
 
   FIELD_ENCRYPTION_KEY: Joi.string().length(32).required(),
+  PAYLOAD_ENCRYPTION_ENABLED: Joi.boolean().default(false),
+  PAYLOAD_ENCRYPTION_KEY: Joi.when("PAYLOAD_ENCRYPTION_ENABLED", {
+    is: true,
+    then: Joi.string().min(32).required(),
+    otherwise: Joi.string().allow("").default(""),
+  }),
+  PAYLOAD_ENCRYPTION_ALGORITHM: Joi.string().default("aes-256-gcm"),
+  GCM_IV_LENGTH: Joi.number().default(12),
+  GCM_TAG_LENGTH: Joi.number().default(16),
+  ENCRYPTED_PAYLOAD_SEPARATOR: Joi.string().default("."),
 
   RATE_LIMIT_TTL: Joi.number().default(60000),
   RATE_LIMIT_MAX: Joi.number().default(100),

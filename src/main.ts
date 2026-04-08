@@ -27,6 +27,11 @@ async function bootstrap() {
       "Authorization",
       "x-correlation-id",
       "x-idempotency-key",
+      "x-payload-encrypted",
+    ],
+    exposedHeaders: [
+      "x-correlation-id",
+      "x-payload-encrypted",
     ],
     credentials: true,
     maxAge: 3600,

@@ -9,10 +9,14 @@ import { Request, Response } from "express";
 import { ApiResponse } from "@common/interfaces";
 import { sanitizeForLog } from "@common/utils";
 import { WinstonLogger } from "@common/utils/winston.logger";
+import { PayloadEncryptionService } from "@common/security";
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  constructor(private readonly logger: WinstonLogger) {}
+  constructor(
+    private readonly logger: WinstonLogger,
+    private readonly payloadEncryptionService: PayloadEncryptionService,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -21,6 +25,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     const correlationId =
       (request.headers["x-correlation-id"] as string) || "unknown";
+    response.setHeader("x-correlation-id", correlationId);
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = "Internal server error";
@@ -96,6 +101,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.warn(httpErrorLog, "HTTP");
     }
 
-    response.status(status).json(body);
+    const responseBody = this.payloadEncryptionService.shouldEncryptResponse(
+      request,
+      response,
+      body,
+    )
+      ? this.payloadEncryptionService.createEncryptedResponseEnvelope(
+          body,
+          request,
+          response,
+        )
+      : body;
+
+    response.status(status).json(responseBody);
   }
 }
